@@ -1,7 +1,6 @@
 import JSZip from "jszip";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import postgres from "postgres";
 
 const chapters = [
   ["chapter-1.xhtml", "I. Down the Rabbit-Hole", [
@@ -50,15 +49,7 @@ async function buildEpub() {
 async function main() {
   const size = await buildEpub();
   console.log(`Seeded public/books/alice.epub (${size} bytes).`);
-  if (process.env.DATABASE_URL) {
-    const sql = postgres(process.env.DATABASE_URL, { max: 1 });
-    await sql.unsafe(`INSERT INTO sessions (id) VALUES ('00000000-0000-4000-8000-000000000001') ON CONFLICT DO NOTHING`);
-    await sql.unsafe(`INSERT INTO books (id, owner_id, title, author, language, original_storage_key, status, processing_progress) VALUES ('11111111-1111-4111-8111-111111111111','00000000-0000-4000-8000-000000000001','Alice’s Adventures in Wonderland','Lewis Carroll','en','books/alice.epub','ready',100) ON CONFLICT DO NOTHING`);
-    await sql.end();
-    console.log("Seeded PostgreSQL demo metadata.");
-  } else {
-    console.log("DATABASE_URL is unset; local deterministic repository will supply metadata.");
-  }
+  console.log("Import the fixture with Cmd+O while the desktop app is running.");
 }
 
 main().catch((error: unknown) => { console.error(error); process.exit(1); });

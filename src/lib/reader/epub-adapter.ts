@@ -37,6 +37,14 @@ export class EpubPublicationAdapter implements PublicationRenderer {
     });
     this.rendition.hooks.content.register((contents: Contents) => {
       contents.document.querySelectorAll("script,iframe,form,object,embed").forEach((node) => node.remove());
+      contents.document.querySelectorAll("img[src],audio[src],video[src],source[src]").forEach((node) => {
+        const source = node.getAttribute("src") ?? "";
+        if (/^(?:https?:)?\/\//i.test(source)) node.remove();
+      });
+      contents.document.querySelectorAll("link[href]").forEach((node) => {
+        const href = node.getAttribute("href") ?? "";
+        if (/^(?:https?:)?\/\//i.test(href)) node.remove();
+      });
       contents.document.querySelectorAll("a[href]").forEach((link) => {
         const href = link.getAttribute("href") ?? "";
         if (/^https?:/i.test(href)) { link.setAttribute("rel", "noreferrer noopener"); link.addEventListener("click", (event) => event.preventDefault()); }

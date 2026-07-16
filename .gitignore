@@ -1,4 +1,9 @@
 .next/
+.forge/
+.vite/
+out/
+.pnpm-store/
+.margin-reader-dev/
 node_modules/
 .env
 .env.local

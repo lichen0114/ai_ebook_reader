@@ -1,3 +1,0 @@
-"use client";
-import Link from "next/link";
-export default function ErrorPage({ reset }: { reset: () => void }) { return <main className="grid min-h-screen place-items-center p-6"><div className="max-w-md text-center"><h1 className="reader-serif text-3xl">This page would not open.</h1><p className="mt-3 text-sm text-[#706a61]">The book is safe. Try loading the reader again, or return to your library.</p><div className="mt-6 flex justify-center gap-3"><button onClick={reset} className="rounded-full bg-[#2c3541] px-5 py-2 text-sm text-white">Try again</button><Link href="/library" className="rounded-full border border-[#cec5b8] px-5 py-2 text-sm">Library</Link></div></div></main>; }

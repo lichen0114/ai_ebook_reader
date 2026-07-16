@@ -7,6 +7,7 @@ import { isSafeArchivePath, sanitizeEpubHtml } from "./sanitize";
 const xml = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", removeNSPrefix: true });
 const MAX_ENTRIES = 2_000;
 const MAX_EXPANDED = 200 * 1024 * 1024;
+const MAX_COMPRESSION_RATIO = 100;
 
 type ManifestItem = { "@_id": string; "@_href": string; "@_media-type": string; "@_properties"?: string };
 
@@ -29,6 +30,10 @@ export async function parseEpub(buffer: ArrayBuffer): Promise<ParsedEpub> {
   if (entries.some((entry) => !isSafeArchivePath(entry.name))) throw new Error("Unsafe EPUB archive path.");
   let expanded = 0;
   for (const entry of entries.filter((item) => !item.dir)) {
+    const compression = (entry as unknown as { _data?: { compressedSize?: number; uncompressedSize?: number } })._data;
+    if (compression?.compressedSize && compression.uncompressedSize && compression.uncompressedSize > 1024 * 1024 && compression.uncompressedSize / compression.compressedSize > MAX_COMPRESSION_RATIO) {
+      throw new Error("EPUB contains a suspiciously compressed archive entry.");
+    }
     const bytes = await entry.async("uint8array");
     expanded += bytes.byteLength;
     if (expanded > MAX_EXPANDED) throw new Error("EPUB expands beyond the safe limit.");

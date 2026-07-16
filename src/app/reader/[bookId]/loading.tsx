@@ -1,1 +1,0 @@
-export default function Loading() { return <div className="grid min-h-screen place-items-center bg-[#f5f0e7]"><div className="text-center"><div className="mx-auto mb-4 size-8 animate-pulse rounded-full bg-[#586b80]"/><p className="reader-serif text-lg text-[#6d675e]">Opening the book…</p></div></div>; }

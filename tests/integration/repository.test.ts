@@ -1,9 +1,27 @@
-import { beforeEach, describe, expect, it } from "vitest";
-import { ownsBook, serverRepository } from "@/lib/books/server-repository";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { LocalRepository } from "@/lib/db/local-repository";
 
-describe("local integration repository", () => {
-  beforeEach(() => { serverRepository.books.clear(); serverRepository.progress.clear(); serverRepository.highlights.clear(); });
-  it("enforces book ownership", () => { serverRepository.books.set("private", { id: "private", ownerId: "owner-a", title: "Book", author: "Author", language: "en", status: "ready", processingProgress: 100, originalUrl: "/book.epub", storageKey: "book.epub", progress: 0, lastRead: "now", description: "", chapters: [] }); expect(ownsBook("owner-a", "private")).toBe(true); expect(ownsBook("owner-b", "private")).toBe(false); });
-  it("persists and restores progress by owner and book", () => { const key = "owner:book"; const value = { locator: { type: "epub" as const, href: "ch.xhtml", spineIndex: 1, cfi: "epubcfi(/6/4)" }, spineIndex: 1, blockIndex: 4, percentage: .32, updatedAt: new Date(0).toISOString() }; serverRepository.progress.set(key, value); expect(serverRepository.progress.get(key)).toEqual(value); });
-  it("creates, restores, and deletes a durable highlight record", () => { const record = { id: "h1", ownerId: "owner", bookId: "book", exact: "selected", prefix: "a ", suffix: " phrase", color: "ochre", locator: { type: "epub" as const, href: "ch.xhtml", spineIndex: 0, cfi: "epubcfi(/6/2)" }, createdAt: new Date(0).toISOString(), updatedAt: new Date(0).toISOString() }; serverRepository.highlights.set(record.id, record); expect([...serverRepository.highlights.values()]).toContainEqual(record); serverRepository.highlights.delete(record.id); expect(serverRepository.highlights.size).toBe(0); });
+const directories: string[] = [];
+afterEach(() => { for (const directory of directories.splice(0)) rmSync(directory, { recursive: true, force: true }); });
+
+describe("SQLite repository", () => {
+  it("imports Alice, indexes it, deduplicates it, and cascades deletion", async () => {
+    const directory = mkdtempSync(path.join(tmpdir(), "margin-reader-")); directories.push(directory);
+    const repository = new LocalRepository(directory);
+    const fixture = path.join(process.cwd(), "public/books/alice.epub");
+    const first = await repository.importFile(fixture);
+    const duplicate = await repository.importFile(fixture);
+    expect(first.status).toBe("ready");
+    expect(first.chapters.length).toBeGreaterThan(2);
+    expect(duplicate.id).toBe(first.id);
+    expect(repository.db.prepare("SELECT count(*) AS count FROM chunks_fts WHERE book_id = ?").get(first.id)).toMatchObject({ count: expect.any(Number) });
+    const progress = repository.saveProgress({ bookId: first.id, locator: { type: "epub", href: first.chapters[0].href, spineIndex: 0, blockIndex: 1 }, spineIndex: 0, blockIndex: 1, percentage: 0.2 });
+    expect(repository.getProgress(first.id)).toEqual(progress);
+    expect(repository.deleteBook(first.id)).toBe(true);
+    expect(repository.getBook(first.id)).toBeNull();
+    repository.close();
+  });
 });
