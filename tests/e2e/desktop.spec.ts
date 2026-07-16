@@ -33,16 +33,30 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await expectReadable(appearance.getByText("Text size", { exact: false }), "text-size label");
     await expectReadable(appearance.locator("label span").first(), "text-size value");
     await expectReadable(appearance.getByRole("button", { name: "Serif" }), "font choice");
+    await expect(appearance.getByRole("button", { name: "Serif" })).toHaveAttribute("aria-pressed", "true");
+
+    const chromeBeforeThemeChange = await reader.locator(":scope > header").evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      color: getComputedStyle(element).color,
+      border: getComputedStyle(element).borderBottomColor,
+    }));
 
     await appearance.getByRole("button", { name: "Light theme" }).click();
     await expect(reader).toHaveAttribute("data-reader-theme", "light");
     await expect(reader).toHaveCSS("background-color", "rgb(251, 250, 247)");
+    await expect(page.frameLocator("[data-testid=epub-view] iframe").locator("body")).toHaveCSS("background-color", "rgb(251, 250, 247)");
     await appearance.getByRole("button", { name: "Paper theme" }).click();
     await expect(reader).toHaveAttribute("data-reader-theme", "paper");
     await expect(reader).toHaveCSS("background-color", "rgb(245, 240, 231)");
     await appearance.getByRole("button", { name: "Dark theme" }).click();
     await expect(reader).toHaveAttribute("data-reader-theme", "dark");
     await expect(reader).toHaveCSS("background-color", "rgb(32, 33, 31)");
+    await expect(page.frameLocator("[data-testid=epub-view] iframe").locator("body")).toHaveCSS("background-color", "rgb(32, 33, 31)");
+    await expect.poll(() => reader.locator(":scope > header").evaluate((element) => ({
+      background: getComputedStyle(element).backgroundColor,
+      color: getComputedStyle(element).color,
+      border: getComputedStyle(element).borderBottomColor,
+    }))).toEqual(chromeBeforeThemeChange);
     await expect(appearance.getByRole("button", { name: "Dark theme" })).toHaveAttribute("aria-pressed", "true");
     await expectReadable(appearance.getByRole("button", { name: "Dark theme" }), "dark-theme choice");
     await expectReadable(page.locator(".native-titlebar"), "native title bar");
@@ -57,8 +71,17 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await page.getByRole("button", { name: "Search book" }).click();
     const searchDialog = page.getByRole("dialog", { name: "Search book" });
     await expectReadable(searchDialog.getByRole("textbox", { name: "Search chapter titles" }), "search input");
-    await expectReadable(searchDialog.locator("button").first(), "search result");
+    const searchResults = searchDialog.getByLabel("Search results");
+    const firstResult = searchResults.locator("button").first();
+    await expectReadable(firstResult, "search result");
+    const firstChapterTitle = (await firstResult.innerText()).trim();
+    await searchDialog.getByRole("textbox", { name: "Search chapter titles" }).fill(firstChapterTitle);
+    await expect(searchResults.getByRole("button", { name: firstChapterTitle, exact: true })).toBeVisible();
+    await searchResults.getByRole("button", { name: firstChapterTitle, exact: true }).click();
+    await expect(searchDialog).toBeHidden();
+    await page.getByRole("button", { name: "Search book" }).click();
     await page.keyboard.press("Escape");
+    await expect(searchDialog).toBeHidden();
 
     await page.getByRole("button", { name: "Toggle intelligent margin" }).click();
     const intelligentMargin = page.getByRole("complementary", { name: "Intelligent margin" });
@@ -86,6 +109,12 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await expectReadable(contentsSheet.getByRole("heading", { name: "Contents" }), "compact contents heading");
     await expectReadable(contentsSheet.getByRole("tab", { name: "Contents" }), "compact contents tab");
     await contentsSheet.getByRole("button", { name: "Close contents" }).click();
+    await page.getByRole("button", { name: "Reading appearance" }).click();
+    const compactAppearance = page.getByRole("dialog", { name: "Reading appearance" });
+    await expect(compactAppearance).toBeVisible();
+    await expectReadable(compactAppearance.getByRole("heading", { name: "Reading appearance" }), "compact appearance heading");
+    await expectReadable(compactAppearance.getByRole("button", { name: "Paginated" }), "compact page-flow choice");
+    await compactAppearance.getByRole("button", { name: "Close reading appearance" }).click();
     await expect(page.locator(".reader-shell")).toHaveAttribute("data-reader-theme", "dark");
     await expect.poll(() => page.evaluate(() => ({ innerWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ innerWidth: 480, scrollWidth: 480 });
     await expect.poll(() => bookParagraphs.evaluateAll((paragraphs) => paragraphs.every((paragraph) => paragraph.scrollWidth <= paragraph.clientWidth))).toBe(true);

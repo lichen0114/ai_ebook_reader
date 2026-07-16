@@ -31,7 +31,7 @@ button { cursor: pointer; }
   place-items: center;
   border-bottom: 1px solid rgba(55, 48, 39, .09);
   background: rgba(244, 239, 229, .82);
-  color: rgba(48, 44, 39, .55);
+  color: #625b52;
   font-size: 11px;
   font-weight: 600;
   letter-spacing: .02em;
@@ -46,10 +46,10 @@ button { cursor: pointer; }
 .hide-scrollbar { scrollbar-width: none; }
 .hide-scrollbar::-webkit-scrollbar { display: none; }
 
-/* Reader chrome uses its own palette so a book theme never leaks into the
-   library, workspace, or application settings. */
+/* The canvas follows the book theme. Everything else is stable application
+   chrome, so a dark page can never wash out controls or side panels. */
 .reader-shell {
-  --reader-bg: #f5f0e7;
+  --reader-canvas-bg: #f5f0e7;
   --reader-fg: #25231f;
   --reader-muted: #706b61;
   --reader-subtle: #8b8378;
@@ -58,7 +58,7 @@ button { cursor: pointer; }
   --reader-border: #d8d0c2;
   --reader-border-soft: rgba(55, 48, 39, .1);
   --reader-hover: rgba(255, 255, 255, .62);
-  --reader-rail: rgba(40, 35, 28, .018);
+  --reader-rail: #f3eee5;
   --reader-accent: #526a83;
   --reader-accent-strong: #344b63;
   --reader-accent-soft: #dde4ea;
@@ -73,43 +73,20 @@ button { cursor: pointer; }
   --reader-error-bg: #fef2f2;
   --reader-error-fg: #991b1b;
   --reader-error-border: #fecaca;
-  background: var(--reader-bg);
+  color-scheme: light;
+  background: var(--reader-canvas-bg);
   color: var(--reader-fg);
 }
 
-.reader-shell[data-reader-theme="light"] { --reader-bg: #fbfaf7; }
+.reader-shell[data-reader-theme="light"] { --reader-canvas-bg: #fbfaf7; }
 
 .reader-shell[data-reader-theme="dark"] {
-  color-scheme: dark;
-  --reader-bg: #20211f;
-  --reader-fg: #ded8cc;
-  --reader-muted: #b1aa9e;
-  --reader-subtle: #979185;
-  --reader-panel: rgba(38, 39, 36, .97);
-  --reader-raised: #2e302c;
-  --reader-border: #4b4d47;
-  --reader-border-soft: rgba(222, 216, 204, .14);
-  --reader-hover: #353732;
-  --reader-rail: rgba(255, 255, 255, .025);
-  --reader-accent: #9eb3c8;
-  --reader-accent-strong: #c0d0df;
-  --reader-accent-soft: #35424d;
-  --reader-progress-track: rgba(222, 216, 204, .16);
-  --reader-action: #a7b9ca;
-  --reader-action-fg: #1d242a;
-  --reader-overlay: rgba(5, 6, 5, .58);
-  --reader-shadow: rgba(0, 0, 0, .34);
-  --reader-warning-bg: #3b3525;
-  --reader-warning-fg: #ead499;
-  --reader-warning-border: #78673e;
-  --reader-error-bg: #432a28;
-  --reader-error-fg: #ffc9c4;
-  --reader-error-border: #75403d;
+  --reader-canvas-bg: #20211f;
 }
 
 .reader-shell .reader-icon-button {
   color: var(--reader-muted);
-  transition-property: background-color, border-color;
+  transition-property: background-color, border-color, color;
 }
 .reader-shell .reader-icon-button:hover {
   border-color: var(--reader-border);
@@ -117,16 +94,23 @@ button { cursor: pointer; }
   color: var(--reader-fg);
 }
 .reader-shell .reader-theme-choice[aria-pressed="true"] {
-  box-shadow: 0 0 0 2px var(--reader-bg), 0 0 0 4px var(--reader-accent);
+  box-shadow: 0 0 0 2px var(--reader-panel), 0 0 0 4px var(--reader-accent);
+}
+.reader-shell .reader-choice[aria-pressed="true"],
+.reader-shell [role="tab"][aria-selected="true"] {
+  border-color: var(--reader-accent);
+  background: var(--reader-accent-soft);
+  color: var(--reader-accent-strong);
+}
+.reader-shell :is(button, a, input, textarea, select):focus-visible {
+  outline: 2px solid var(--reader-accent-strong);
+  outline-offset: 2px;
+}
+.reader-shell input[type="range"]:focus-visible {
+  border-radius: 999px;
 }
 .reader-shell .reader-progress-label {
-  background: linear-gradient(to bottom, var(--reader-border-soft), transparent);
-}
-
-body:has(.reader-shell[data-reader-theme="dark"]) .native-titlebar {
-  border-bottom-color: rgba(222, 216, 204, .12);
-  background: rgba(32, 33, 31, .88);
-  color: #aaa499;
+  background: linear-gradient(to bottom, #f5f0e7 0%, rgba(245, 240, 231, .82) 58%, transparent 100%);
 }
 
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
