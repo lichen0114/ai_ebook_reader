@@ -113,6 +113,31 @@ button { cursor: pointer; }
   background: linear-gradient(to bottom, #f5f0e7 0%, rgba(245, 240, 231, .82) 58%, transparent 100%);
 }
 
+.selection-command-bar::after {
+  position: absolute;
+  left: var(--selection-pointer-left);
+  width: 10px;
+  height: 10px;
+  content: "";
+  background: #292824;
+  border-color: #5b554b;
+  transform: translateX(-50%) rotate(45deg);
+}
+.selection-command-bar[data-placement="above"]::after {
+  bottom: -6px;
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
+.selection-command-bar[data-placement="below"]::after {
+  top: -6px;
+  border-top: 1px solid;
+  border-left: 1px solid;
+}
+.selection-command-bar .selection-command:focus-visible {
+  outline-color: #f0cf7c;
+  outline-offset: -2px;
+}
+
 @keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
 .animate-rise { animation: rise .28s ease-out both; }
 

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleStop, Columns2, Highlighter, Languages, Library, Menu, MessageSquareText, Moon, NotebookPen, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Sparkles, Sun, TextCursorInput, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronLeft, ChevronRight, CircleStop, Columns2, Highlighter, Library, Menu, Moon, PanelLeftClose, PanelLeftOpen, Plus, Search, Settings2, Sparkles, Sun, X } from "lucide-react";
 import { IconButton } from "@/components/ui/icon-button";
+import { SelectionToolbar } from "@/components/reader/selection-toolbar";
 import { EpubPublicationAdapter } from "@/lib/reader/epub-adapter";
 import type { PublicationLocator, ReaderSelection, ReaderStyles, TocItem } from "@/lib/reader/publication-adapter";
 import type { ReaderAction, ReaderScope } from "@/lib/ai/types";
@@ -42,6 +43,24 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
   const [searchOpen, setSearchOpen] = useState(false);
   const [aiConfiguration, setAiConfiguration] = useState<{ settings: AiSettings; ready: boolean }>();
 
+  const dismissSelection = useCallback(() => {
+    adapterRef.current?.clearSelection();
+    setSelection(null);
+    setNoteMode(false);
+    setNote("");
+  }, []);
+
+  const navigateReader = useCallback(async (target?: PublicationLocator | string) => {
+    dismissSelection();
+    await adapterRef.current?.display(target);
+  }, [dismissSelection]);
+
+  const turnPage = useCallback(async (direction: "next" | "previous") => {
+    dismissSelection();
+    if (direction === "next") await adapterRef.current?.next();
+    else await adapterRef.current?.previous();
+  }, [dismissSelection]);
+
   useEffect(() => {
     let active = true;
     void Promise.all([window.marginReader.reader.getProgress(book.id), window.marginReader.highlights.list(book.id), window.marginReader.conversations.load(book.id)]).then(([saved, savedHighlights, conversations]) => {
@@ -81,6 +100,7 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
       setReady(true);
     })().catch((caught: unknown) => setLoadError(caught instanceof Error ? caught.message : "The EPUB could not be opened."));
     const removeRelocated = adapter.onRelocated((next, percentage) => {
+      dismissSelection();
       setLocator(next);
       setProgress(Math.max(0, Math.min(100, Math.round(percentage * 100))));
       const payload = { locator: next, spineIndex: next.type === "epub" ? next.spineIndex : 0, blockIndex: next.type === "epub" ? next.blockIndex ?? 0 : 0, percentage };
@@ -89,8 +109,9 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
       progressTimer.current = setTimeout(() => void saveProgress(book.id, payload, settingsRef.current), 350);
     });
     const removeSelection = adapter.onSelection((next) => { setSelection(next); setNoteMode(false); setNote(""); });
-    return () => { active = false; removeRelocated(); removeSelection(); adapter.destroy(); if (progressTimer.current) clearTimeout(progressTimer.current); if (lastProgress.current) void saveProgress(book.id, lastProgress.current, settingsRef.current); };
-  }, [book.id, book.originalUrl, book.chapters]);
+    const removeSurfaceInteraction = adapter.onSurfaceInteraction(dismissSelection);
+    return () => { active = false; removeRelocated(); removeSelection(); removeSurfaceInteraction(); adapter.destroy(); if (progressTimer.current) clearTimeout(progressTimer.current); if (lastProgress.current) void saveProgress(book.id, lastProgress.current, settingsRef.current); };
+  }, [book.id, book.originalUrl, book.chapters, dismissSelection]);
 
   useEffect(() => {
     settingsRef.current = settings;
@@ -101,16 +122,32 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
   useEffect(() => { if (ready) highlights.forEach((highlight) => { if (highlight.locator.cfi) adapterRef.current?.highlight(highlight.locator.cfi, highlight.color); }); }, [ready, highlights]);
   useEffect(() => window.marginReader.ai.onChunk((chunk) => handleAiChunk(chunk)), []);
   useEffect(() => {
+    if (!selection) return;
+    const dismissOutside = (event: Event) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest("[data-selection-toolbar]")) return;
+      dismissSelection();
+    };
+    document.addEventListener("mousedown", dismissOutside, true);
+    document.addEventListener("touchstart", dismissOutside, true);
+    document.addEventListener("contextmenu", dismissOutside, true);
+    return () => {
+      document.removeEventListener("mousedown", dismissOutside, true);
+      document.removeEventListener("touchstart", dismissOutside, true);
+      document.removeEventListener("contextmenu", dismissOutside, true);
+    };
+  }, [dismissSelection, selection]);
+  useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.key === "Escape") { setSelection(null); setAppearanceOpen(false); setMobileSheet(null); setSearchOpen(false); }
+      if (event.key === "Escape") { dismissSelection(); setAppearanceOpen(false); setMobileSheet(null); setSearchOpen(false); }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setSearchOpen(true); }
-      if (event.key === "ArrowRight" && !isTyping(event.target)) void adapterRef.current?.next();
-      if (event.key === "ArrowLeft" && !isTyping(event.target)) void adapterRef.current?.previous();
+      if (event.key === "ArrowRight" && !isTyping(event.target)) void turnPage("next");
+      if (event.key === "ArrowLeft" && !isTyping(event.target)) void turnPage("previous");
     };
     const search = () => setSearchOpen(true);
     window.addEventListener("keydown", key); window.addEventListener("margin:search", search);
     return () => { window.removeEventListener("keydown", key); window.removeEventListener("margin:search", search); };
-  }, []);
+  }, [dismissSelection, turnPage]);
 
   function handleAiChunk(chunk: AiChunk) {
     if (chunk.requestId !== requestId.current) return;
@@ -124,13 +161,14 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
     const selectedText = selection?.text;
     const prompt = text?.trim() || selectedText || action;
     if (!prompt) return;
+    if (selectedText) dismissSelection();
     if (!aiConfiguration?.ready) { setAiOpen(true); setAiError(aiConfiguration?.settings.provider === "gemini" ? "Add your Gemini API key in Settings to use the intelligent margin." : "Open Ollama and choose or download a local model in Settings first."); return; }
     const effectiveScope = selectedText && action !== "ask" ? "selection" : scope;
-    setAiOpen(true); setSelection(null); setQuestion(""); setAiError(""); setAnswer({ text: "", citations: [], retrieval: "searching" }); setAiStatus("streaming");
+    setAiOpen(true); setQuestion(""); setAiError(""); setAnswer({ text: "", citations: [], retrieval: "searching" }); setAiStatus("streaming");
     try {
       requestId.current = await window.marginReader.ai.start({ bookId: book.id, threadId: threadId.current, question: prompt, action, scope: effectiveScope, currentLocator: locator.type === "epub" ? locator : { type: "epub", href: "", spineIndex: 0 }, currentSpineIndex: locator.type === "epub" ? locator.spineIndex : 0, currentBlockIndex: locator.type === "epub" ? locator.blockIndex ?? 0 : 0, selectedText, targetLanguage: action === "translate" ? "Traditional Chinese" : undefined });
     } catch (error) { setAiStatus("ready"); setAiError(error instanceof Error ? error.message : "The answer could not start."); }
-  }, [aiConfiguration, book.id, locator, scope, selection]);
+  }, [aiConfiguration, book.id, dismissSelection, locator, scope, selection]);
 
   async function stop() { if (requestId.current) await window.marginReader.ai.cancel(requestId.current); requestId.current = undefined; setAiStatus("ready"); }
   async function saveHighlight(withNote = false) {
@@ -138,16 +176,16 @@ export function ReaderShell({ book, onOpenSettings }: { book: LocalBook; onOpenS
     const item = await window.marginReader.highlights.create({ id: crypto.randomUUID(), bookId: book.id, exact: selection.text, prefix: selection.locator.quote?.prefix ?? "", suffix: selection.locator.quote?.suffix ?? "", color: "rgba(223, 188, 98, .5)", locator: selection.locator, note: withNote ? note.trim() || null : null });
     setHighlights((items) => [item, ...items]);
     if (item.locator.cfi) adapterRef.current?.highlight(item.locator.cfi, item.color);
-    setSelection(null); setNoteMode(false);
+    dismissSelection();
   }
-  async function openCitation(citation: LocalCitation) { setReturnLocator(adapterRef.current?.getLocator() ?? locator); await adapterRef.current?.display(citation.locator); if (citation.locator.cfi) adapterRef.current?.highlight(citation.locator.cfi, "rgba(91, 130, 167, .42)"); }
-  async function backToAnswer() { if (returnLocator) await adapterRef.current?.display(returnLocator); setReturnLocator(null); setAiOpen(true); }
+  async function openCitation(citation: LocalCitation) { setReturnLocator(adapterRef.current?.getLocator() ?? locator); await navigateReader(citation.locator); if (citation.locator.cfi) adapterRef.current?.highlight(citation.locator.cfi, "rgba(91, 130, 167, .42)"); }
+  async function backToAnswer() { if (returnLocator) await navigateReader(returnLocator); setReturnLocator(null); setAiOpen(true); }
   return <main className="reader-shell flex h-dvh min-h-[560px] w-full flex-col overflow-hidden pt-[40px]" data-reader-theme={settings.theme}>
     <header className="relative z-40 flex h-[58px] shrink-0 items-center border-b border-[var(--reader-border-soft)] bg-[var(--reader-panel)] px-4 text-[var(--reader-fg)] backdrop-blur-xl"><div className="flex flex-1 items-center gap-1"><Link href="/library" aria-label="Back to library" className="reader-icon-button grid size-10 place-items-center rounded-full"><Library size={18}/></Link><IconButton className="reader-icon-button hidden sm:grid" onClick={() => setRailOpen((value) => !value)} aria-label={railOpen ? "Close contents rail" : "Open contents rail"} aria-pressed={railOpen}>{railOpen ? <PanelLeftClose size={18}/> : <PanelLeftOpen size={18}/>}</IconButton><IconButton className="reader-icon-button sm:hidden" onClick={() => setMobileSheet("toc")} aria-label="Open table of contents"><Menu size={19}/></IconButton></div><div className="min-w-0 text-center"><p className="max-w-[45vw] truncate text-[13px] font-medium">{book.title}</p><div className="mx-auto mt-1.5 h-[2px] w-28 overflow-hidden rounded-full bg-[var(--reader-progress-track)]"><div className="h-full bg-[var(--reader-accent)]" style={{ width: `${progress}%` }}/></div></div><div className="flex flex-1 justify-end gap-1"><IconButton className="reader-icon-button" onClick={() => setSearchOpen(true)} aria-label="Search book"><Search size={17}/></IconButton><IconButton className="reader-icon-button" onClick={() => { if (window.matchMedia("(max-width: 639px)").matches) { setAppearanceOpen(false); setMobileSheet("appearance"); } else { setMobileSheet(null); setAppearanceOpen((value) => !value); } }} aria-label="Reading appearance" aria-haspopup="dialog" aria-expanded={appearanceOpen || mobileSheet === "appearance"}><Settings2 size={18}/></IconButton><IconButton onClick={() => setAiOpen((value) => !value)} aria-label="Toggle intelligent margin" aria-pressed={aiOpen} className={`reader-icon-button ${aiOpen ? "bg-[var(--reader-accent-soft)] text-[var(--reader-accent-strong)]" : ""}`}><Sparkles size={17}/></IconButton></div></header>
-    <div className="relative flex min-h-0 flex-1 overflow-hidden"><aside role="navigation" aria-label="Book navigation" className={`hidden shrink-0 overflow-hidden border-r border-[var(--reader-border-soft)] bg-[var(--reader-rail)] transition-[width] duration-200 sm:block ${railOpen ? "w-[260px]" : "w-0"}`}><Rail toc={toc} highlights={highlights} onNavigate={(href) => void adapterRef.current?.display(href)}/></aside><section className="relative flex min-w-0 flex-1 flex-col"><div className="reader-progress-label absolute inset-x-0 top-0 z-10 flex justify-center py-2 text-[10px] uppercase tracking-[.12em] text-[var(--reader-muted)]">{progress}% read</div><div className="relative mx-auto h-full w-full" style={{ maxWidth: settings.width + 72 }}>{!ready && !loadError && <div className="absolute inset-0 z-10 grid place-items-center"><div className="text-center"><BookOpen className="mx-auto mb-3 animate-pulse text-[var(--reader-accent)]"/><p className="reader-serif text-lg">Opening the pages…</p></div></div>}{loadError && <div className="absolute inset-0 z-10 grid place-items-center p-8 text-center"><div><p className="reader-serif text-2xl">The EPUB could not be opened.</p><p className="mt-3 text-sm">{loadError}</p><Link href="/library" className="mt-5 inline-block rounded-full bg-[var(--reader-action)] px-5 py-2 text-sm text-[var(--reader-action-fg)]">Return to library</Link></div></div>}<div ref={mountRef} className="h-full w-full px-5 pb-8 pt-10" data-testid="epub-view"/></div><button onClick={() => void adapterRef.current?.previous()} aria-label="Previous page" className="absolute bottom-5 left-4 z-20 grid size-10 place-items-center rounded-full border border-[var(--reader-border)] bg-[var(--reader-panel)] text-[var(--reader-fg)] hover:bg-[var(--reader-hover)]"><ChevronLeft size={18}/></button><button onClick={() => void adapterRef.current?.next()} aria-label="Next page" className="absolute bottom-5 right-4 z-20 grid size-10 place-items-center rounded-full border border-[var(--reader-border)] bg-[var(--reader-panel)] text-[var(--reader-fg)] hover:bg-[var(--reader-hover)]"><ChevronRight size={18}/></button>{returnLocator && <button onClick={() => void backToAnswer()} className="absolute bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full bg-[var(--reader-action)] px-4 py-2 text-xs text-[var(--reader-action-fg)]"><ArrowLeft className="mr-1 inline" size={14}/>Back to answer</button>}</section><aside aria-label="Intelligent margin" className={`absolute inset-y-0 right-0 z-30 w-[min(400px,94vw)] border-l border-[var(--reader-border-soft)] bg-[var(--reader-panel)] shadow-[-18px_0_45px_var(--reader-shadow)] backdrop-blur-xl transition-transform lg:relative lg:shadow-none ${aiOpen ? "translate-x-0" : "translate-x-full lg:hidden"}`}><AiMargin book={book} provider={aiConfiguration?.settings.provider ?? "ollama"} scope={scope} setScope={setScope} answer={answer} status={aiStatus} error={aiError} question={question} setQuestion={setQuestion} onAsk={(text) => void ask("ask", text)} onStop={() => void stop()} onClose={() => setAiOpen(false)} onCitation={(citation) => void openCitation(citation)} onOpenSettings={onOpenSettings}/></aside>{selection && <SelectionToolbar selection={selection} noteMode={noteMode} note={note} setNote={setNote} setNoteMode={setNoteMode} onClose={() => setSelection(null)} onHighlight={() => void saveHighlight(false)} onNote={() => void saveHighlight(true)} onAction={(action) => void ask(action)}/>}</div>
+    <div className="relative flex min-h-0 flex-1 overflow-hidden"><aside role="navigation" aria-label="Book navigation" className={`hidden shrink-0 overflow-hidden border-r border-[var(--reader-border-soft)] bg-[var(--reader-rail)] transition-[width] duration-200 sm:block ${railOpen ? "w-[260px]" : "w-0"}`}><Rail toc={toc} highlights={highlights} onNavigate={(href) => void navigateReader(href)}/></aside><section className="relative flex min-w-0 flex-1 flex-col"><div className="reader-progress-label absolute inset-x-0 top-0 z-10 flex justify-center py-2 text-[10px] uppercase tracking-[.12em] text-[var(--reader-muted)]">{progress}% read</div><div className="relative mx-auto h-full w-full" style={{ maxWidth: settings.width + 72 }}>{!ready && !loadError && <div className="absolute inset-0 z-10 grid place-items-center"><div className="text-center"><BookOpen className="mx-auto mb-3 animate-pulse text-[var(--reader-accent)]"/><p className="reader-serif text-lg">Opening the pages…</p></div></div>}{loadError && <div className="absolute inset-0 z-10 grid place-items-center p-8 text-center"><div><p className="reader-serif text-2xl">The EPUB could not be opened.</p><p className="mt-3 text-sm">{loadError}</p><Link href="/library" className="mt-5 inline-block rounded-full bg-[var(--reader-action)] px-5 py-2 text-sm text-[var(--reader-action-fg)]">Return to library</Link></div></div>}<div ref={mountRef} className="h-full w-full px-5 pb-8 pt-10" data-testid="epub-view"/></div><button onClick={() => void turnPage("previous")} aria-label="Previous page" className="absolute bottom-5 left-4 z-20 grid size-10 place-items-center rounded-full border border-[var(--reader-border)] bg-[var(--reader-panel)] text-[var(--reader-fg)] hover:bg-[var(--reader-hover)]"><ChevronLeft size={18}/></button><button onClick={() => void turnPage("next")} aria-label="Next page" className="absolute bottom-5 right-4 z-20 grid size-10 place-items-center rounded-full border border-[var(--reader-border)] bg-[var(--reader-panel)] text-[var(--reader-fg)] hover:bg-[var(--reader-hover)]"><ChevronRight size={18}/></button>{returnLocator && <button onClick={() => void backToAnswer()} className="absolute bottom-5 left-1/2 z-30 -translate-x-1/2 rounded-full bg-[var(--reader-action)] px-4 py-2 text-xs text-[var(--reader-action-fg)]"><ArrowLeft className="mr-1 inline" size={14}/>Back to answer</button>}</section><aside aria-label="Intelligent margin" className={`absolute inset-y-0 right-0 z-30 w-[min(400px,94vw)] border-l border-[var(--reader-border-soft)] bg-[var(--reader-panel)] shadow-[-18px_0_45px_var(--reader-shadow)] backdrop-blur-xl transition-transform lg:relative lg:shadow-none ${aiOpen ? "translate-x-0" : "translate-x-full lg:hidden"}`}><AiMargin book={book} provider={aiConfiguration?.settings.provider ?? "ollama"} scope={scope} setScope={setScope} answer={answer} status={aiStatus} error={aiError} question={question} setQuestion={setQuestion} onAsk={(text) => void ask("ask", text)} onStop={() => void stop()} onClose={() => setAiOpen(false)} onCitation={(citation) => void openCitation(citation)} onOpenSettings={onOpenSettings}/></aside>{selection && <SelectionToolbar selection={selection} noteMode={noteMode} note={note} onNoteChange={setNote} onEnterNoteMode={() => setNoteMode(true)} onCancelNote={() => { setNoteMode(false); setNote(""); }} onClose={dismissSelection} onHighlight={() => void saveHighlight(false)} onSaveNote={() => void saveHighlight(true)} onAction={(action) => void ask(action)}/>}</div>
     {appearanceOpen && <AppearancePopover settings={settings} setSettings={setSettings} onClose={() => setAppearanceOpen(false)}/>}
-    {mobileSheet && <MobileSheet title={mobileSheet === "toc" ? "Contents" : "Reading appearance"} onClose={() => setMobileSheet(null)}>{mobileSheet === "toc" ? <Rail toc={toc} highlights={highlights} onNavigate={(href) => { void adapterRef.current?.display(href); setMobileSheet(null); }}/> : <AppearanceControls settings={settings} setSettings={setSettings}/>}</MobileSheet>}
-    {searchOpen && <SearchDialog toc={toc} onNavigate={(href) => { void adapterRef.current?.display(href); setSearchOpen(false); }} onClose={() => setSearchOpen(false)}/>}
+    {mobileSheet && <MobileSheet title={mobileSheet === "toc" ? "Contents" : "Reading appearance"} onClose={() => setMobileSheet(null)}>{mobileSheet === "toc" ? <Rail toc={toc} highlights={highlights} onNavigate={(href) => { void navigateReader(href); setMobileSheet(null); }}/> : <AppearanceControls settings={settings} setSettings={setSettings}/>}</MobileSheet>}
+    {searchOpen && <SearchDialog toc={toc} onNavigate={(href) => { void navigateReader(href); setSearchOpen(false); }} onClose={() => setSearchOpen(false)}/>}
   </main>;
 }
 
@@ -159,11 +197,6 @@ function saveProgress(bookId: string, payload: { locator: PublicationLocator; sp
 function Rail({ toc, highlights, onNavigate }: { toc: TocItem[]; highlights: Highlight[]; onNavigate: (href: string) => void }) {
   const [tab, setTab] = useState<"contents" | "highlights">("contents");
   return <div className="h-full min-w-[260px] overflow-y-auto p-5"><div role="tablist" aria-label="Reader navigation" className="mb-5 flex gap-1 rounded-lg bg-[var(--reader-border-soft)] p-1"><button role="tab" aria-selected={tab === "contents"} onClick={() => setTab("contents")} className={`flex-1 rounded-md px-2 py-1.5 text-xs ${tab === "contents" ? "bg-[var(--reader-raised)] text-[var(--reader-fg)] shadow-sm" : "text-[var(--reader-muted)] hover:bg-[var(--reader-hover)]"}`}>Contents</button><button role="tab" aria-selected={tab === "highlights"} onClick={() => setTab("highlights")} className={`flex-1 rounded-md px-2 py-1.5 text-xs ${tab === "highlights" ? "bg-[var(--reader-raised)] text-[var(--reader-fg)] shadow-sm" : "text-[var(--reader-muted)] hover:bg-[var(--reader-hover)]"}`}>Highlights</button></div>{tab === "contents" ? <ol className="space-y-1">{toc.map((item, index) => <li key={`${item.href}-${index}`}><button onClick={() => onNavigate(item.href)} className="w-full rounded-lg px-3 py-2.5 text-left text-[13px] text-[var(--reader-fg)] hover:bg-[var(--reader-hover)]"><span className="mr-2 text-[10px] text-[var(--reader-subtle)]">{String(index + 1).padStart(2, "0")}</span>{item.label}</button></li>)}</ol> : !highlights.length ? <div className="py-10 text-center text-[var(--reader-muted)]"><Highlighter className="mx-auto mb-3 text-[var(--reader-subtle)]"/><p className="text-xs">Select a passage to keep it here.</p></div> : highlights.map((item) => <button key={item.id} onClick={() => onNavigate(item.locator.cfi ?? item.locator.href)} className="mb-2 w-full rounded-lg border-l-2 border-[#d3a94e] bg-[var(--reader-raised)] p-3 text-left reader-serif text-sm text-[var(--reader-fg)]">“{item.exact.slice(0, 120)}”</button>)}</div>;
-}
-
-function SelectionToolbar({ selection, noteMode, note, setNote, setNoteMode, onClose, onHighlight, onNote, onAction }: { selection: ReaderSelection; noteMode: boolean; note: string; setNote: (value: string) => void; setNoteMode: (value: boolean) => void; onClose: () => void; onHighlight: () => void; onNote: () => void; onAction: (action: ReaderAction) => void }) {
-  const left = Math.max(12, Math.min(window.innerWidth - 350, selection.rect.left + selection.rect.width / 2 - 175)); const top = Math.max(70, Math.min(window.innerHeight - 140, selection.rect.top - 58));
-  return <div role="toolbar" aria-label="Selected text actions" className="fixed z-[70] w-[350px] rounded-xl border border-[#cfc6b8] bg-[#262b31] p-1.5 text-white shadow-2xl" style={{ left, top }}>{!noteMode ? <div className="flex items-center gap-0.5 overflow-x-auto">{[["Highlight", Highlighter, onHighlight], ["Note", NotebookPen, () => setNoteMode(true)], ["Explain", Sparkles, () => onAction("explain")], ["Define", TextCursorInput, () => onAction("define")], ["Translate", Languages, () => onAction("translate")], ["Ask", MessageSquareText, () => onAction("ask")]].map(([label, Icon, action]) => { const SelectedIcon = Icon as typeof Highlighter; return <button key={String(label)} onClick={action as () => void} className="flex shrink-0 flex-col items-center gap-1 rounded-lg px-2.5 py-1.5 text-[9px] hover:bg-white/10"><SelectedIcon size={15}/>{String(label)}</button>; })}<button onClick={onClose} aria-label="Close selected text actions" className="ml-auto grid size-8 place-items-center"><X size={14}/></button></div> : <div className="p-1"><textarea autoFocus value={note} onChange={(event) => setNote(event.target.value)} placeholder="Add a thought…" className="h-20 w-full resize-none rounded-lg bg-white/10 p-2 text-xs outline-none"/><div className="mt-1 flex justify-end gap-2"><button onClick={() => setNoteMode(false)} className="px-3 py-1 text-xs">Cancel</button><button onClick={onNote} className="rounded-md bg-[#e1bd69] px-3 py-1 text-xs text-[#2b2925]">Save note</button></div></div>}</div>;
 }
 
 function AppearancePopover({ settings, setSettings, onClose }: { settings: Settings; setSettings: React.Dispatch<React.SetStateAction<Settings>>; onClose: () => void }) { return <section role="dialog" aria-labelledby="reader-appearance-heading" className="fixed right-14 top-24 z-[80] hidden w-72 rounded-2xl border border-[var(--reader-border)] bg-[var(--reader-panel)] p-5 text-[var(--reader-fg)] shadow-xl shadow-[var(--reader-shadow)] sm:block"><div className="mb-4 flex items-center justify-between"><h2 id="reader-appearance-heading" className="text-sm font-semibold">Reading appearance</h2><button onClick={onClose} aria-label="Close reading appearance" className="reader-icon-button grid size-8 place-items-center rounded-full"><X size={16}/></button></div><AppearanceControls settings={settings} setSettings={setSettings}/></section>; }

@@ -24,6 +24,7 @@ export class EpubPublicationAdapter implements PublicationRenderer {
   private toc: TocItem[] = [];
   private relocationListeners = new Set<(locator: PublicationLocator, percentage: number) => void>();
   private selectionListeners = new Set<(selection: ReaderSelection) => void>();
+  private surfaceInteractionListeners = new Set<() => void>();
 
   async open(target: HTMLElement, sourceUrl: string) {
     const { default: ePub } = await import("epubjs");
@@ -47,7 +48,13 @@ export class EpubPublicationAdapter implements PublicationRenderer {
       const locator: PublicationLocator = { ...current, cfi, quote: { exact: text, prefix: "", suffix: "" } };
       this.selectionListeners.forEach((listener) => listener({ text, locator, rect }));
     });
+    this.rendition.on("mousedown", () => this.emitSurfaceInteraction());
+    this.rendition.on("touchstart", () => this.emitSurfaceInteraction());
+    this.rendition.on("keydown", (event: KeyboardEvent) => {
+      if (event.key === "Escape") this.emitSurfaceInteraction();
+    });
     this.rendition.hooks.content.register((contents: Contents) => {
+      contents.document.addEventListener("contextmenu", () => this.emitSurfaceInteraction());
       contents.document.querySelectorAll("script,iframe,form,object,embed").forEach((node) => node.remove());
       contents.document.querySelectorAll("img[src],audio[src],video[src],source[src]").forEach((node) => {
         const source = node.getAttribute("src") ?? "";
@@ -77,6 +84,11 @@ export class EpubPublicationAdapter implements PublicationRenderer {
   getToc() { return this.toc; }
   onRelocated(listener: (locator: PublicationLocator, percentage: number) => void) { this.relocationListeners.add(listener); return () => this.relocationListeners.delete(listener); }
   onSelection(listener: (selection: ReaderSelection) => void) { this.selectionListeners.add(listener); return () => this.selectionListeners.delete(listener); }
+  onSurfaceInteraction(listener: () => void) { this.surfaceInteractionListeners.add(listener); return () => this.surfaceInteractionListeners.delete(listener); }
+  clearSelection() {
+    const contents = (this.rendition?.getContents() ?? []) as unknown as Contents[];
+    for (const content of Array.isArray(contents) ? contents : [contents]) content.window.getSelection()?.removeAllRanges();
+  }
   applyStyles(styles: ReaderStyles) {
     if (!this.rendition) return;
     const colors = styles.theme === "dark" ? { color: "#ded8cc", bg: "#20211f" } : styles.theme === "paper" ? { color: "#2b2925", bg: "#f6f0e4" } : { color: "#262522", bg: "#fbfaf7" };
@@ -89,6 +101,7 @@ export class EpubPublicationAdapter implements PublicationRenderer {
   }
   setFlow(mode: "paginated" | "scrolled-doc") { this.rendition?.flow(mode); }
   highlight(cfi: string, color = "rgba(220, 183, 94, .38)") { this.rendition?.annotations.highlight(cfi, {}, undefined, "margin-highlight", { fill: color, "fill-opacity": "0.45", "mix-blend-mode": "multiply" }); }
+  private emitSurfaceInteraction() { this.surfaceInteractionListeners.forEach((listener) => listener()); }
 }
 
 function mapToc(item: NavItem): TocItem { return { id: item.id, href: item.href, label: item.label.trim(), subitems: item.subitems?.map(mapToc) }; }

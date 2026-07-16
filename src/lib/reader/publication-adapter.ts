@@ -31,6 +31,8 @@ export interface PublicationRenderer {
   applyStyles(styles: ReaderStyles): void;
   onRelocated(listener: (locator: PublicationLocator, percentage: number) => void): () => void;
   onSelection(listener: (selection: ReaderSelection) => void): () => void;
+  onSurfaceInteraction(listener: () => void): () => void;
+  clearSelection(): void;
 }
 
 export type ReaderStyles = {

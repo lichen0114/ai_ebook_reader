@@ -122,7 +122,8 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     const contentsSheet = page.getByRole("dialog", { name: "Contents" });
     await expectReadable(contentsSheet.getByRole("heading", { name: "Contents" }), "compact contents heading");
     await expectReadable(contentsSheet.getByRole("tab", { name: "Contents" }), "compact contents tab");
-    await contentsSheet.getByRole("button", { name: "Close contents" }).click();
+    await contentsSheet.locator("ol button").first().click();
+    await expect(contentsSheet).toBeHidden();
     await page.getByRole("button", { name: "Reading appearance" }).click();
     const compactAppearance = page.getByRole("dialog", { name: "Reading appearance" });
     await expect(compactAppearance).toBeVisible();
@@ -134,6 +135,65 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     const restoredParagraphs = page.frameLocator("[data-testid=epub-view] iframe").locator("article > p");
     await expect(restoredParagraphs.first()).toBeVisible();
     await expect.poll(() => restoredParagraphs.evaluateAll((paragraphs) => paragraphs.every((paragraph) => paragraph.scrollWidth <= paragraph.clientWidth))).toBe(true);
+
+    await selectBookText(page, 0, 8, 52);
+    const selectionToolbar = page.getByRole("toolbar", { name: "Selected text actions" });
+    await expect(selectionToolbar).toBeVisible();
+    for (const action of ["Highlight", "Note", "Explain", "Define", "Translate", "Ask"]) {
+      await expect(selectionToolbar.getByRole("button", { name: action, exact: true })).toBeVisible();
+    }
+    await expect(selectionToolbar.getByRole("button", { name: "Close selected text actions" })).toBeVisible();
+    expect(await selectionToolbar.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const buttons = [...element.querySelectorAll("button")];
+      return {
+        withinViewport: bounds.left >= 12 && bounds.right <= innerWidth - 12 && bounds.top >= 12 && bounds.bottom <= innerHeight - 12,
+        noHorizontalOverflow: element.scrollWidth <= element.clientWidth,
+        everyControlContained: buttons.every((button) => {
+          const control = button.getBoundingClientRect();
+          return control.left >= bounds.left && control.right <= bounds.right;
+        }),
+      };
+    })).toEqual({ withinViewport: true, noHorizontalOverflow: true, everyControlContained: true });
+
+    await selectionToolbar.getByRole("button", { name: "Note", exact: true }).click();
+    const noteEditor = selectionToolbar.getByRole("textbox", { name: "Note on this passage" });
+    await expect(noteEditor).toBeFocused();
+    await noteEditor.fill("A note that makes the command bar taller.");
+    await expect(selectionToolbar).toBeVisible();
+    await expect(selectionToolbar.getByRole("button", { name: "Close selected text actions" })).toBeVisible();
+    await selectionToolbar.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(selectionToolbar.getByRole("button", { name: "Explain", exact: true })).toBeVisible();
+    expect(await selectedBookText(page)).not.toBe("");
+
+    const bookBody = page.frameLocator("[data-testid=epub-view] iframe").locator("body");
+    await bookBody.click({ position: { x: 8, y: 8 } });
+    await expect(selectionToolbar).toBeHidden();
+    await expect.poll(() => selectedBookText(page)).toBe("");
+
+    await selectBookText(page, 0, 4, 36);
+    await expect(selectionToolbar).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(selectionToolbar).toBeHidden();
+    await expect.poll(() => selectedBookText(page)).toBe("");
+
+    await selectBookText(page, 0, 12, 46);
+    await expect(selectionToolbar).toBeVisible();
+    await selectionToolbar.getByRole("button", { name: "Close selected text actions" }).click();
+    await expect(selectionToolbar).toBeHidden();
+    await expect.poll(() => selectedBookText(page)).toBe("");
+
+    await selectBookText(page, 0, 2, 26);
+    const firstPassage = await selectedBookText(page);
+    await selectBookText(page, 1, 5, 42);
+    const replacementPassage = await selectedBookText(page);
+    expect(replacementPassage).not.toBe(firstPassage);
+    await expect(selectionToolbar).toHaveCount(1);
+
+    await bookBody.click({ button: "right", position: { x: 8, y: 8 } });
+    await expect(selectionToolbar).toBeHidden();
+    await expect.poll(() => selectedBookText(page)).toBe("");
+    expect(await bookBody.evaluate((body) => body.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, button: 2 })))).toBe(true);
   } finally {
     await closeApplication(application);
     rmSync(userData, { recursive: true, force: true });
@@ -165,6 +225,28 @@ async function closeApplication(application: Awaited<ReturnType<typeof electron.
     const timeout = setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); resolve(); }, 5_000);
     child.once("exit", () => { clearTimeout(timeout); resolve(); });
   });
+}
+
+async function selectBookText(page: import("@playwright/test").Page, paragraphIndex: number, start: number, end: number) {
+  const paragraph = page.frameLocator("[data-testid=epub-view] iframe").locator("article > p").nth(paragraphIndex);
+  await paragraph.evaluate((element, offsets) => {
+    const document = element.ownerDocument;
+    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let textNode = walker.nextNode();
+    while (textNode && !textNode.textContent?.trim()) textNode = walker.nextNode();
+    if (!textNode?.textContent) throw new Error("The fixture paragraph has no selectable text.");
+    const range = document.createRange();
+    range.setStart(textNode, Math.min(offsets.start, textNode.textContent.length - 1));
+    range.setEnd(textNode, Math.min(offsets.end, textNode.textContent.length));
+    const selection = document.defaultView?.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  }, { start, end });
+}
+
+async function selectedBookText(page: import("@playwright/test").Page) {
+  return page.frameLocator("[data-testid=epub-view] iframe").locator("body").evaluate((body) => body.ownerDocument.defaultView?.getSelection()?.toString() ?? "");
 }
 
 async function expectReadable(locator: import("@playwright/test").Locator, label: string, minimum = 4.5) {
