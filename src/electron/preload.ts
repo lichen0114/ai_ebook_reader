@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { z } from "zod";
-import { aiChunkSchema, aiRequestSchema, aiSettingsSchema, appCommandSchema, bookSchema, conversationSchema, credentialInputSchema, credentialStatusSchema, credentialTestResultSchema, highlightSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, progressSchema, responseSchemas, updateStatusSchema, type MarginReaderApi, type UtilityOperation } from "@/shared/ipc";
+import { aiChunkSchema, aiRequestSchema, aiSettingsSchema, aiStartIpcRequestSchema, appCommandSchema, bookSchema, conversationSchema, credentialInputSchema, credentialStatusSchema, credentialTestResultSchema, highlightSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, progressSchema, responseSchemas, updateStatusSchema, type MarginReaderApi, type UtilityOperation } from "@/shared/ipc";
 
 async function invoke<T>(operation: UtilityOperation, payload: unknown): Promise<T> {
   const result = await ipcRenderer.invoke("margin:invoke", operation, payload);
@@ -61,7 +61,7 @@ const api: MarginReaderApi = {
   ai: {
     start: async (request) => {
       const requestId = crypto.randomUUID();
-      await ipcRenderer.invoke("margin:ai-start", { ...aiRequestSchema.parse(request), requestId });
+      await ipcRenderer.invoke("margin:ai-start", aiStartIpcRequestSchema.parse({ ...aiRequestSchema.parse(request), requestId }));
       return requestId;
     },
     cancel: async (requestId) => { await ipcRenderer.invoke("margin:ai-cancel", { requestId }); },

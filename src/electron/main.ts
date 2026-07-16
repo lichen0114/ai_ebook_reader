@@ -1,7 +1,7 @@
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, session, shell, utilityProcess, type IpcMainInvokeEvent, type UtilityProcess } from "electron";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { aiChunkSchema, aiSettingsSchema, credentialInputSchema, credentialStatusSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, requestSchemas, updateStatusSchema, type AiChunk, type ImportProgress, type OllamaPullProgress, type UpdateStatus, type UtilityOperation } from "@/shared/ipc";
+import { aiChunkSchema, aiSettingsSchema, aiStartIpcRequestSchema, credentialInputSchema, credentialStatusSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, requestSchemas, updateStatusSchema, type AiChunk, type ImportProgress, type OllamaPullProgress, type UpdateStatus, type UtilityOperation } from "@/shared/ipc";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "margin-reader", privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: false, stream: true } }]);
 
@@ -253,7 +253,7 @@ function registerIpc() {
   });
   ipcMain.handle("margin:ai-start", async (event, raw: unknown) => {
     assertTrusted(event);
-    const request = requestSchemas["ai.start"].omit({ apiKey: true, provider: true, model: true }).parse(raw);
+    const request = aiStartIpcRequestSchema.parse(raw);
     const windowId = event.sender.id;
     if (activeAiByWindow.has(windowId)) throw new Error("Finish or cancel the current answer first.");
     const starts = aiStartsByWindow.get(windowId) ?? [];

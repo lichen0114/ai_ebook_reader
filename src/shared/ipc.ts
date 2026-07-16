@@ -89,7 +89,7 @@ export const citationSchema = z.object({
 
 export type LocalCitation = z.infer<typeof citationSchema>;
 
-export const aiRequestSchema = z.object({
+const aiRequestBaseSchema = z.object({
   bookId: uuidSchema,
   threadId: uuidSchema.optional(),
   question: z.string().min(1).max(20_000),
@@ -100,11 +100,19 @@ export const aiRequestSchema = z.object({
   currentBlockIndex: z.number().int().min(0),
   selectedText: z.string().max(20_000).optional(),
   targetLanguage: z.string().max(80).optional()
-}).superRefine((value, context) => {
+});
+
+function requireSelectionText(value: z.infer<typeof aiRequestBaseSchema>, context: z.RefinementCtx) {
   if (value.scope === "selection" && !value.selectedText) {
     context.addIssue({ code: "custom", path: ["selectedText"], message: "Selection scope requires text." });
   }
-});
+}
+
+export const aiRequestSchema = aiRequestBaseSchema.superRefine(requireSelectionText);
+
+export const aiStartIpcRequestSchema = aiRequestBaseSchema.extend({
+  requestId: uuidSchema
+}).superRefine(requireSelectionText);
 
 export type AiRequest = z.infer<typeof aiRequestSchema>;
 
@@ -201,7 +209,7 @@ export const requestSchemas = {
   "ollama.pull.start": z.object({ model: z.enum(["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]) }),
   "ollama.pull.cancel": z.object({ requestId: uuidSchema }),
   "ollama.delete": z.object({ model: z.string().min(1).max(300) }),
-  "ai.start": aiRequestSchema.extend({ requestId: uuidSchema, provider: z.enum(["gemini", "ollama"]), model: z.string().min(1).max(300), apiKey: z.string().min(1).optional() }),
+  "ai.start": aiRequestBaseSchema.extend({ requestId: uuidSchema, provider: z.enum(["gemini", "ollama"]), model: z.string().min(1).max(300), apiKey: z.string().min(1).optional() }).superRefine(requireSelectionText),
   "ai.cancel": z.object({ requestId: uuidSchema })
 } as const;
 
