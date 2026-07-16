@@ -1,0 +1,34 @@
+import type { NextConfig } from "next";
+
+const csp = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+  "style-src 'self' 'unsafe-inline' blob:",
+  "img-src 'self' blob: data:",
+  "font-src 'self' data:",
+  "connect-src 'self' https://ai-gateway.vercel.sh",
+  "frame-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+  "frame-ancestors 'none'"
+].join("; ");
+
+const nextConfig: NextConfig = {
+  poweredByHeader: false,
+  allowedDevOrigins: ["127.0.0.1"],
+  experimental: { optimizePackageImports: ["lucide-react"] },
+  async headers() {
+    return [{
+      source: "/:path*",
+      headers: [
+        { key: "Content-Security-Policy", value: csp },
+        { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        { key: "X-Content-Type-Options", value: "nosniff" },
+        { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" }
+      ]
+    }];
+  }
+};
+
+export default nextConfig;
