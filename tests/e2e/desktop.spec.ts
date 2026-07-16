@@ -19,6 +19,10 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await expect(page.getByText("Ready to read", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByText("Ready to read", { exact: true }).click();
     await expect(page.locator("[data-testid=epub-view] iframe")).toBeVisible();
+    const bookParagraphs = page.frameLocator("[data-testid=epub-view] iframe").locator("article > p");
+    await expect(bookParagraphs.first()).toHaveCSS("text-align", "justify");
+    await expect(bookParagraphs.first()).toHaveCSS("text-align-last", "left");
+    await expect(bookParagraphs.first()).toHaveCSS("hyphens", "auto");
 
     const reader = page.locator(".reader-shell");
     await expect(reader).toHaveAttribute("data-reader-theme", "paper");
@@ -84,6 +88,7 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await contentsSheet.getByRole("button", { name: "Close contents" }).click();
     await expect(page.locator(".reader-shell")).toHaveAttribute("data-reader-theme", "dark");
     await expect.poll(() => page.evaluate(() => ({ innerWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ innerWidth: 480, scrollWidth: 480 });
+    await expect.poll(() => bookParagraphs.evaluateAll((paragraphs) => paragraphs.every((paragraph) => paragraph.scrollWidth <= paragraph.clientWidth))).toBe(true);
   } finally {
     await closeApplication(application);
     rmSync(userData, { recursive: true, force: true });

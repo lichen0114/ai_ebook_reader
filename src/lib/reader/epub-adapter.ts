@@ -5,6 +5,18 @@ import type { Location } from "epubjs/types/rendition";
 import type { NavItem } from "epubjs/types/navigation";
 import type { PublicationLocator, PublicationRenderer, ReaderSelection, ReaderStyles, TocItem } from "./publication-adapter";
 
+const bodyParagraphSelector = [
+  "p:not(blockquote p)",
+  ":not(li p)",
+  ":not(figure p)",
+  ":not([align=\"center\"])",
+  ":not([style*=\"text-align: center\"])",
+  ":not([style*=\"text-align:center\"])",
+  ":not(.center)",
+  ":not(.centered)",
+  ":not(.text-center)",
+].join("");
+
 export class EpubPublicationAdapter implements PublicationRenderer {
   private book: Book | null = null;
   private rendition: Rendition | null = null;
@@ -70,7 +82,9 @@ export class EpubPublicationAdapter implements PublicationRenderer {
     const colors = styles.theme === "dark" ? { color: "#ded8cc", bg: "#20211f" } : styles.theme === "paper" ? { color: "#2b2925", bg: "#f6f0e4" } : { color: "#262522", bg: "#fbfaf7" };
     this.rendition.themes.default({
       body: { color: `${colors.color} !important`, background: `${colors.bg} !important`, "font-family": styles.fontFamily === "serif" ? '"Iowan Old Style", Palatino, Georgia, serif !important' : '"Avenir Next", sans-serif !important', "font-size": `${styles.fontSize}px !important`, "line-height": `${styles.lineHeight} !important`, padding: "0 2px !important" },
-      p: { "margin-bottom": "1.15em !important" }, h1: { "font-weight": "500 !important", "letter-spacing": "-.02em !important" }, a: { color: `${colors.color} !important` }
+      p: { "margin-bottom": "1.15em !important" },
+      [bodyParagraphSelector]: { "text-align": "justify !important", "text-align-last": "left !important", hyphens: "auto !important", "-webkit-hyphens": "auto !important" },
+      h1: { "font-weight": "500 !important", "letter-spacing": "-.02em !important" }, a: { color: `${colors.color} !important` }
     });
   }
   setFlow(mode: "paginated" | "scrolled-doc") { this.rendition?.flow(mode); }
