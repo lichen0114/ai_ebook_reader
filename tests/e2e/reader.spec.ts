@@ -21,9 +21,26 @@ test("library loads the seeded public-domain book", async ({ page }) => {
 test("a DRM-free EPUB upload advances through processing to ready", async ({ page }) => {
   await page.goto("/library");
   await page.locator('input[type="file"]').setInputFiles("public/books/alice.epub");
-  const card = page.getByText("AI indexing", { exact: true }).or(page.getByText("Ready to read", { exact: true })).last();
+  const uploadedBooks = page.getByRole("region", { name: "Uploaded books" });
+  const card = uploadedBooks.getByText("AI indexing", { exact: true }).or(uploadedBooks.getByText("Ready to read", { exact: true }));
   await expect(card).toBeVisible();
-  await expect(page.getByText("Ready to read", { exact: true }).last()).toBeVisible();
+  const readyBook = uploadedBooks.getByRole("link").filter({ hasText: "Ready to read" });
+  await expect(readyBook).toBeVisible();
+
+  const href = await readyBook.getAttribute("href");
+  expect(href).toMatch(/^\/reader\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+  const response = await page.request.get(href!);
+  expect(response.status()).toBe(200);
+
+  await readyBook.click();
+  await expect(page).toHaveURL(new RegExp(`${href}$`));
+  await expect(page.frameLocator("iframe").getByRole("heading", { name: "I. Down the Rabbit-Hole" })).toBeVisible();
+});
+
+test("an unknown uploaded-book UUID returns 404", async ({ page }) => {
+  await page.goto("/reader/11111111-1111-4111-8111-111111111111");
+  await expect(page.getByRole("heading", { name: "404", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "This page could not be found." })).toBeVisible();
 });
 
 test("reader opens and table-of-contents navigation works", async ({ page }) => {
