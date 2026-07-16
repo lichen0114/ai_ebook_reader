@@ -1,16 +1,19 @@
 import { randomUUID } from "node:crypto";
+import { totalmem } from "node:os";
 import { LocalRepository } from "@/lib/db/local-repository";
 import { filterHistoryForScope } from "@/lib/ai/retrieve";
 import { readerInstructions } from "@/lib/ai/instructions";
-import { requestSchemas, responseSchemas, type AiChunk, type AiRequest, type Conversation, type UtilityOperation } from "@/shared/ipc";
+import { OllamaService, streamOllamaChat, type OllamaUsage } from "@/lib/ai/ollama";
+import { requestSchemas, responseSchemas, type AiChunk, type AiRequest, type AiSettings, type Conversation, type OllamaPullProgress, type UtilityOperation } from "@/shared/ipc";
 
 type RpcRequest = { id: string; operation: UtilityOperation; payload: unknown };
 type RpcResponse = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: string };
-type UtilityEvent = { type: "event"; channel: "ai" | "import"; payload: unknown };
+type UtilityEvent = { type: "event"; channel: "ai" | "import" | "ollama-pull"; payload: unknown };
 
 const userDataPath = process.env.MARGIN_READER_USER_DATA;
 if (!userDataPath) throw new Error("Missing local data directory.");
 const repository = new LocalRepository(userDataPath);
+const ollama = new OllamaService(process.env.MARGIN_READER_TEST_OLLAMA_UNAVAILABLE === "1" ? (async () => { throw new Error("Ollama test server is unavailable."); }) as typeof fetch : fetch);
 const activeRequests = new Map<string, AbortController>();
 const startTimes: number[] = [];
 const keepAlive = setInterval(() => undefined, 60_000);
@@ -53,8 +56,20 @@ async function dispatch(operation: UtilityOperation, payload: never): Promise<un
       return repository.exportNotes(value.bookId, value.format);
     }
     case "credentials.test": return testCredential((payload as { apiKey: string }).apiKey);
+    case "ai.settings.get": return getAiSettings((payload as { hasGeminiKey: boolean }).hasGeminiKey);
+    case "ai.settings.save": return saveAiSettings(payload as AiSettings);
+    case "ollama.status": return ollama.status(totalmem());
+    case "ollama.pull.start": return { requestId: await ollama.startPull((payload as { model: string }).model, (progress) => handlePullProgress(progress)) };
+    case "ollama.pull.cancel": return { cancelled: ollama.cancelPull((payload as { requestId: string }).requestId) };
+    case "ollama.delete": {
+      const model = (payload as { model: string }).model;
+      await ollama.deleteModel(model);
+      const settings = repository.getAiSettings(false);
+      const next = settings.ollamaModel === model ? repository.saveAiSettings({ ...settings, ollamaModel: null }) : settings;
+      return { deleted: true, settings: next };
+    }
     case "ai.start": {
-      const value = payload as AiRequest & { requestId: string; apiKey: string };
+      const value = payload as AiRequest & { requestId: string; provider: "gemini" | "ollama"; model: string; apiKey?: string };
       startAi(value);
       return { started: true };
     }
@@ -66,7 +81,7 @@ async function dispatch(operation: UtilityOperation, payload: never): Promise<un
   }
 }
 
-function startAi(request: AiRequest & { requestId: string; apiKey: string }) {
+function startAi(request: AiExecutionRequest) {
   const now = Date.now();
   while (startTimes.length && startTimes[0] < now - 60_000) startTimes.shift();
   if (startTimes.length >= 20) throw new Error("AI request limit reached. Please wait a moment.");
@@ -77,7 +92,9 @@ function startAi(request: AiRequest & { requestId: string; apiKey: string }) {
   void runAi(request, controller).finally(() => activeRequests.delete(request.requestId));
 }
 
-async function runAi(request: AiRequest & { requestId: string; apiKey: string }, controller: AbortController) {
+type AiExecutionRequest = AiRequest & { requestId: string; provider: "gemini" | "ollama"; model: string; apiKey?: string };
+
+async function runAi(request: AiExecutionRequest, controller: AbortController) {
   const startedAt = Date.now();
   try {
     emitAi({ requestId: request.requestId, type: "retrieval", status: "searching" });
@@ -100,20 +117,23 @@ async function runAi(request: AiRequest & { requestId: string; apiKey: string },
       readerInstructions(request.action, request.scope),
       request.targetLanguage ? `Target language: ${request.targetLanguage}.` : "",
       history.length ? `Permitted conversation context:\n${history.map((item) => `${item.role}: ${item.text}`).join("\n")}` : "",
-      `Question: ${request.question}`,
+      `Question: ${boundText(request.question, 8_000)}`,
       "Permitted excerpts:",
       ...results.map((result) => `[${result.citation.sourceId}] ${result.citation.chapterTitle}\n${result.text}`)
     ].filter(Boolean).join("\n\n");
     let complete = "";
-    await streamGemini(request.apiKey, prompt, controller.signal, (delta) => {
+    const usage = request.provider === "gemini"
+      ? await streamGemini(requireGeminiKey(request.apiKey), prompt, controller.signal, onDelta)
+      : await streamOllamaChat(request.model, prompt, controller.signal, onDelta);
+    function onDelta(delta: string) {
       complete += delta;
       emitAi({ requestId: request.requestId, type: "text", delta });
-    });
+    }
     if (controller.signal.aborted) return;
-    if (!complete.trim()) throw new Error("Gemini returned an empty response.");
+    if (!complete.trim()) throw new Error(`${request.provider === "gemini" ? "Gemini" : "Ollama"} returned an empty response.`);
     const threadId = persistAnswer(request, complete, citations);
-    repository.db.prepare("INSERT INTO ai_usage (id, book_id, model, action, latency_ms, created_at) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(randomUUID(), request.bookId, "gemini-2.5-flash", request.action, Date.now() - startedAt, new Date().toISOString());
+    repository.db.prepare("INSERT INTO ai_usage (id, book_id, model, action, input_tokens, output_tokens, latency_ms, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(randomUUID(), request.bookId, request.model, request.action, usage.inputTokens, usage.outputTokens, Date.now() - startedAt, new Date().toISOString());
     emitAi({ requestId: request.requestId, type: "done", threadId });
   } catch (error) {
     if (!controller.signal.aborted) emitAi({ requestId: request.requestId, type: "error", message: safeMessage(error, request.apiKey) });
@@ -124,9 +144,16 @@ function loadBoundedHistory(request: AiRequest) {
   if (!request.threadId) return [];
   const thread = repository.loadConversations(request.bookId).find((item) => item.id === request.threadId);
   if (!thread) return [];
-  const allowed = filterHistoryForScope(thread.messages.map((message) => ({ role: message.role, scope: message.scope, citations: message.citations })), request.scope, request.currentSpineIndex, request.currentBlockIndex);
-  const allowedIds = new Set(allowed.map((item) => thread.messages.find((message) => message.role === item.role && message.scope === item.scope)?.id));
-  return thread.messages.filter((message) => allowedIds.has(message.id)).slice(-8);
+  const candidates = thread.messages.map((message) => ({ id: message.id, role: message.role, scope: message.scope, citations: message.citations }));
+  const allowedIds = new Set(filterHistoryForScope(candidates, request.scope, request.currentSpineIndex, request.currentBlockIndex).map((item) => item.id));
+  const recent = thread.messages.filter((message) => allowedIds.has(message.id)).slice(-8);
+  let remaining = 18_000;
+  return recent.reverse().flatMap((message) => {
+    if (remaining <= 0) return [];
+    const text = boundText(message.text, Math.min(4_000, remaining));
+    remaining -= text.length;
+    return [{ ...message, text }];
+  }).reverse();
 }
 
 function persistAnswer(request: AiRequest, answer: string, citations: Conversation["messages"][number]["citations"]) {
@@ -143,7 +170,7 @@ function persistAnswer(request: AiRequest, answer: string, citations: Conversati
   return threadId;
 }
 
-async function streamGemini(apiKey: string, prompt: string, signal: AbortSignal, onText: (text: string) => void) {
+async function streamGemini(apiKey: string, prompt: string, signal: AbortSignal, onText: (text: string) => void): Promise<OllamaUsage> {
   const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:streamGenerateContent?alt=sse", {
     method: "POST", signal,
     headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
@@ -153,6 +180,8 @@ async function streamGemini(apiKey: string, prompt: string, signal: AbortSignal,
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffered = "";
+  let inputTokens: number | null = null;
+  let outputTokens: number | null = null;
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
@@ -161,11 +190,14 @@ async function streamGemini(apiKey: string, prompt: string, signal: AbortSignal,
     buffered = lines.pop() ?? "";
     for (const line of lines) {
       if (!line.startsWith("data: ")) continue;
-      const json = JSON.parse(line.slice(6)) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      const json = JSON.parse(line.slice(6)) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } };
       const text = json.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
       if (text) onText(text);
+      if (Number.isInteger(json.usageMetadata?.promptTokenCount)) inputTokens = json.usageMetadata!.promptTokenCount!;
+      if (Number.isInteger(json.usageMetadata?.candidatesTokenCount)) outputTokens = json.usageMetadata!.candidatesTokenCount!;
     }
   }
+  return { inputTokens, outputTokens };
 }
 
 async function testCredential(apiKey: string) {
@@ -184,6 +216,42 @@ function safeMessage(error: unknown, secret?: string) {
   let message = error instanceof Error ? error.message : "The local service could not complete the request.";
   if (secret) message = message.replaceAll(secret, "[REDACTED]");
   return message.replace(/AIza[\w-]{20,}/g, "[REDACTED]").slice(0, 1_000);
+}
+
+async function getAiSettings(hasGeminiKey: boolean) {
+  const existing = repository.db.prepare("SELECT value FROM settings WHERE key = 'ai'").get();
+  if (existing) return repository.getAiSettings(hasGeminiKey);
+  const status = await ollama.status(totalmem());
+  const preferred = status.models.find((model) => model.name === status.recommendation.model)?.name ?? status.models[0]?.name ?? null;
+  return repository.getAiSettings(hasGeminiKey, preferred);
+}
+
+async function saveAiSettings(settings: AiSettings) {
+  const current = repository.getAiSettings(false);
+  if (settings.provider === "ollama" && settings.ollamaModel && settings.ollamaModel !== current.ollamaModel) {
+    const status = await ollama.status(totalmem());
+    if (!status.available) throw new Error("Open Ollama, then retry before selecting a local model.");
+    if (!status.models.some((model) => model.name === settings.ollamaModel)) throw new Error("Choose an installed local completion model.");
+  }
+  return repository.saveAiSettings(settings);
+}
+
+function handlePullProgress(progress: OllamaPullProgress) {
+  if (progress.state === "success") {
+    const current = repository.getAiSettings(false);
+    repository.saveAiSettings({ ...current, ollamaModel: progress.model });
+  }
+  emit("ollama-pull", progress);
+}
+
+function requireGeminiKey(apiKey?: string) {
+  if (!apiKey) throw new Error("Add your Gemini API key in Settings first.");
+  return apiKey;
+}
+
+function boundText(value: string, maxCharacters: number) {
+  if (value.length <= maxCharacters) return value;
+  return `${value.slice(0, Math.max(0, maxCharacters - 20))}\n[…context trimmed]`;
 }
 
 process.once("exit", () => { clearInterval(keepAlive); repository.close(); });

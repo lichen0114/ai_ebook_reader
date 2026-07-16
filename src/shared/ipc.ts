@@ -134,6 +134,51 @@ export const credentialStatusSchema = z.object({
 export const credentialInputSchema = z.string().trim().min(20).max(500);
 export const credentialTestResultSchema = z.object({ valid: z.boolean(), message: z.string().max(500) });
 
+export const aiSettingsSchema = z.object({
+  provider: z.enum(["gemini", "ollama"]),
+  ollamaModel: z.string().trim().min(1).max(300).nullable()
+});
+export type AiSettings = z.infer<typeof aiSettingsSchema>;
+
+export const ollamaModelSchema = z.object({
+  name: z.string().min(1).max(300),
+  size: z.number().nonnegative(),
+  modifiedAt: z.string().max(100),
+  parameterSize: z.string().max(100).nullable(),
+  quantizationLevel: z.string().max(100).nullable()
+});
+export type OllamaModel = z.infer<typeof ollamaModelSchema>;
+
+export const curatedOllamaModelSchema = z.object({
+  model: z.string().min(1).max(300),
+  label: z.string().min(1).max(100),
+  approximateBytes: z.number().nonnegative(),
+  memoryTier: z.enum(["compact", "balanced", "roomy"])
+});
+export type CuratedOllamaModel = z.infer<typeof curatedOllamaModelSchema>;
+
+export const ollamaPullProgressSchema = z.object({
+  requestId: uuidSchema,
+  model: z.string().min(1).max(300),
+  status: z.string().max(300),
+  completedBytes: z.number().nonnegative(),
+  totalBytes: z.number().nonnegative().nullable(),
+  state: z.enum(["running", "success", "error", "cancelled"]),
+  message: z.string().max(500).nullable()
+});
+export type OllamaPullProgress = z.infer<typeof ollamaPullProgressSchema>;
+
+export const ollamaStatusSchema = z.object({
+  available: z.boolean(),
+  version: z.string().max(100).nullable(),
+  models: z.array(ollamaModelSchema),
+  recommendation: curatedOllamaModelSchema,
+  memoryBytes: z.number().nonnegative(),
+  activePull: z.object({ requestId: uuidSchema, model: z.string().min(1).max(300) }).nullable(),
+  error: z.string().max(500).nullable()
+});
+export type OllamaStatus = z.infer<typeof ollamaStatusSchema>;
+
 export const requestSchemas = {
   "library.list": z.object({}),
   "library.get": z.object({ id: uuidSchema }),
@@ -150,7 +195,13 @@ export const requestSchemas = {
   "conversations.delete": z.object({ id: uuidSchema }),
   "notes.export": z.object({ bookId: uuidSchema, format: z.enum(["markdown", "json"]) }),
   "credentials.test": z.object({ apiKey: z.string().min(1) }),
-  "ai.start": aiRequestSchema.extend({ requestId: uuidSchema, apiKey: z.string().min(1) }),
+  "ai.settings.get": z.object({ hasGeminiKey: z.boolean() }),
+  "ai.settings.save": aiSettingsSchema,
+  "ollama.status": z.object({}),
+  "ollama.pull.start": z.object({ model: z.enum(["qwen3.5:2b", "qwen3.5:4b", "qwen3.5:9b"]) }),
+  "ollama.pull.cancel": z.object({ requestId: uuidSchema }),
+  "ollama.delete": z.object({ model: z.string().min(1).max(300) }),
+  "ai.start": aiRequestSchema.extend({ requestId: uuidSchema, provider: z.enum(["gemini", "ollama"]), model: z.string().min(1).max(300), apiKey: z.string().min(1).optional() }),
   "ai.cancel": z.object({ requestId: uuidSchema })
 } as const;
 
@@ -172,6 +223,12 @@ export const responseSchemas = {
   "conversations.delete": z.object({ deleted: z.boolean() }),
   "notes.export": z.object({ content: z.string(), suggestedName: z.string() }),
   "credentials.test": z.object({ valid: z.boolean(), message: z.string() }),
+  "ai.settings.get": aiSettingsSchema,
+  "ai.settings.save": aiSettingsSchema,
+  "ollama.status": ollamaStatusSchema,
+  "ollama.pull.start": z.object({ requestId: uuidSchema }),
+  "ollama.pull.cancel": z.object({ cancelled: z.boolean() }),
+  "ollama.delete": z.object({ deleted: z.boolean(), settings: aiSettingsSchema }),
   "ai.start": z.object({ started: z.boolean() }),
   "ai.cancel": z.object({ cancelled: z.boolean() })
 } as const;
@@ -229,6 +286,18 @@ export interface MarginReaderApi {
     set(apiKey: string): Promise<void>;
     clear(): Promise<void>;
     test(): Promise<{ valid: boolean; message: string }>;
+  };
+  aiSettings: {
+    get(): Promise<AiSettings>;
+    save(settings: AiSettings): Promise<AiSettings>;
+  };
+  ollama: {
+    status(): Promise<OllamaStatus>;
+    startPull(model: "qwen3.5:2b" | "qwen3.5:4b" | "qwen3.5:9b"): Promise<string>;
+    cancelPull(requestId: string): Promise<boolean>;
+    deleteModel(model: string): Promise<AiSettings>;
+    openDownloadPage(): Promise<void>;
+    onPullProgress(callback: (progress: OllamaPullProgress) => void): () => void;
   };
   ai: {
     start(request: AiRequest): Promise<string>;

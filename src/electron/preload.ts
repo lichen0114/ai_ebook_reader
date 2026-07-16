@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from "electron";
 import { z } from "zod";
-import { aiChunkSchema, aiRequestSchema, appCommandSchema, bookSchema, conversationSchema, credentialInputSchema, credentialStatusSchema, credentialTestResultSchema, highlightSchema, importProgressSchema, progressSchema, responseSchemas, updateStatusSchema, type MarginReaderApi, type UtilityOperation } from "@/shared/ipc";
+import { aiChunkSchema, aiRequestSchema, aiSettingsSchema, appCommandSchema, bookSchema, conversationSchema, credentialInputSchema, credentialStatusSchema, credentialTestResultSchema, highlightSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, progressSchema, responseSchemas, updateStatusSchema, type MarginReaderApi, type UtilityOperation } from "@/shared/ipc";
 
 async function invoke<T>(operation: UtilityOperation, payload: unknown): Promise<T> {
   const result = await ipcRenderer.invoke("margin:invoke", operation, payload);
@@ -45,6 +45,18 @@ const api: MarginReaderApi = {
     set: async (apiKey) => { await ipcRenderer.invoke("margin:credentials-set", credentialInputSchema.parse(apiKey)); },
     clear: async () => { await ipcRenderer.invoke("margin:credentials-clear"); },
     test: async () => credentialTestResultSchema.parse(await ipcRenderer.invoke("margin:credentials-test"))
+  },
+  aiSettings: {
+    get: async () => aiSettingsSchema.parse(await ipcRenderer.invoke("margin:ai-settings-get")),
+    save: async (settings) => aiSettingsSchema.parse(await ipcRenderer.invoke("margin:ai-settings-save", aiSettingsSchema.parse(settings)))
+  },
+  ollama: {
+    status: async () => ollamaStatusSchema.parse(await ipcRenderer.invoke("margin:ollama-status")),
+    startPull: async (model) => responseSchemas["ollama.pull.start"].parse(await ipcRenderer.invoke("margin:ollama-pull-start", { model })).requestId,
+    cancelPull: async (requestId) => responseSchemas["ollama.pull.cancel"].parse(await ipcRenderer.invoke("margin:ollama-pull-cancel", { requestId })).cancelled,
+    deleteModel: async (model) => responseSchemas["ollama.delete"].parse(await ipcRenderer.invoke("margin:ollama-delete", { model })).settings,
+    openDownloadPage: async () => { await ipcRenderer.invoke("margin:ollama-open-download"); },
+    onPullProgress: (callback) => listen("margin:ollama-pull-progress", ollamaPullProgressSchema, callback)
   },
   ai: {
     start: async (request) => {

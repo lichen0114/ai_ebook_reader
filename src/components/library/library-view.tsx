@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen, Check, CloudUpload, FileWarning, KeyRound, LoaderCircle, MoreHorizontal, Plus, Search, Settings, Trash2 } from "lucide-react";
-import type { LocalBook } from "@/shared/ipc";
+import { BookOpen, Check, CloudUpload, Cpu, FileWarning, KeyRound, LoaderCircle, MoreHorizontal, Plus, Search, Settings, Trash2 } from "lucide-react";
+import type { AiSettings, LocalBook } from "@/shared/ipc";
 import { Link } from "@/renderer/router";
 
 export function LibraryView({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -10,19 +10,26 @@ export function LibraryView({ onOpenSettings }: { onOpenSettings: () => void }) 
   const [notice, setNotice] = useState("");
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [configured, setConfigured] = useState(false);
+  const [aiReadiness, setAiReadiness] = useState<{ ready: boolean; settings: AiSettings; detail: string }>();
   const refresh = useCallback(() => void window.marginReader.library.list().then(setBooks).catch((error: unknown) => setNotice(error instanceof Error ? error.message : "The library could not be opened.")), []);
+  const refreshAi = useCallback(() => void Promise.all([window.marginReader.aiSettings.get(), window.marginReader.credentials.status()]).then(async ([settings, credentials]) => {
+    if (settings.provider === "gemini") { setAiReadiness({ ready: credentials.configured, settings, detail: credentials.configured ? "Gemini is ready." : "Add your Gemini API key to ask about a book." }); return; }
+    const ollama = await window.marginReader.ollama.status();
+    const ready = ollama.available && Boolean(settings.ollamaModel && ollama.models.some((model) => model.name === settings.ollamaModel));
+    setAiReadiness({ ready, settings, detail: !ollama.available ? "Install or open Ollama to use local AI." : settings.ollamaModel ? "The selected local model is unavailable." : "Choose or download a local model." });
+  }), []);
 
   useEffect(() => {
     refresh();
-    void window.marginReader.credentials.status().then((value) => setConfigured(value.configured));
+    refreshAi();
     const removeProgress = window.marginReader.imports.onProgress(() => refresh());
     const handleRefresh = () => refresh();
     const handleSearch = () => setSearchOpen(true);
     window.addEventListener("margin:library-refresh", handleRefresh);
     window.addEventListener("margin:search", handleSearch);
-    return () => { removeProgress(); window.removeEventListener("margin:library-refresh", handleRefresh); window.removeEventListener("margin:search", handleSearch); };
-  }, [refresh]);
+    window.addEventListener("margin:ai-settings-changed", refreshAi);
+    return () => { removeProgress(); window.removeEventListener("margin:library-refresh", handleRefresh); window.removeEventListener("margin:search", handleSearch); window.removeEventListener("margin:ai-settings-changed", refreshAi); };
+  }, [refresh, refreshAi]);
 
   async function upload(file?: File) {
     setNotice("");
@@ -43,7 +50,7 @@ export function LibraryView({ onOpenSettings }: { onOpenSettings: () => void }) 
       <div className="mb-10 flex flex-col items-stretch justify-between gap-8 lg:flex-row lg:items-end"><div className="animate-rise"><p className="small-caps mb-3 text-xs font-semibold text-[#7b7267]">Your private reading room</p><h1 className="reader-serif text-4xl leading-[1.04] tracking-[-.03em] sm:text-5xl">Pages worth returning to.</h1><p className="mt-4 max-w-xl text-sm leading-relaxed text-[#70695f]">Your books, notes, and search index stay on this Mac. Add a DRM-free EPUB and keep reading offline.</p></div>
         <div onDragEnter={(event) => { event.preventDefault(); setDragging(true); }} onDragOver={(event) => event.preventDefault()} onDragLeave={() => setDragging(false)} onDrop={(event) => { event.preventDefault(); setDragging(false); void upload(event.dataTransfer.files[0]); }} className={`flex min-h-20 min-w-0 items-center gap-4 rounded-2xl border border-dashed px-5 py-4 transition lg:min-w-[330px] ${dragging ? "border-[#536b88] bg-white/75" : "border-[#c9c0b2] bg-[#faf7f0]/50"}`}><CloudUpload className="shrink-0 text-[#6f7d8c]" size={22}/><div className="min-w-0"><p className="text-sm font-medium">Drop a DRM-free EPUB</p><p className="mt-0.5 text-xs text-[#7a746b]">Up to 50 MB · copied into your library</p></div></div>
       </div>
-      {!configured && <button onClick={onOpenSettings} className="mb-7 flex w-full items-center gap-4 rounded-2xl border border-[#c7d2dc] bg-[#e9eef1]/75 px-5 py-4 text-left"><span className="grid size-9 place-items-center rounded-full bg-[#d8e1e8] text-[#4b6176]"><KeyRound size={16}/></span><span><strong className="block text-sm">Reading works offline. Add a Gemini key when you want the intelligent margin.</strong><span className="mt-0.5 block text-xs text-[#697782]">Your own key is kept in macOS Keychain.</span></span><span className="ml-auto text-xs font-medium text-[#496178]">Open settings</span></button>}
+      {aiReadiness && !aiReadiness.ready && <button onClick={onOpenSettings} className="mb-7 flex w-full items-center gap-4 rounded-2xl border border-[#c7d2dc] bg-[#e9eef1]/75 px-5 py-4 text-left"><span className="grid size-9 place-items-center rounded-full bg-[#d8e1e8] text-[#4b6176]">{aiReadiness.settings.provider === "ollama" ? <Cpu size={16}/> : <KeyRound size={16}/>}</span><span><strong className="block text-sm">Reading and search work offline. Set up {aiReadiness.settings.provider === "ollama" ? "local AI" : "Gemini"} when you want the intelligent margin.</strong><span className="mt-0.5 block text-xs text-[#697782]">{aiReadiness.detail}</span></span><span className="ml-auto shrink-0 text-xs font-medium text-[#496178]">Open settings</span></button>}
       {notice && <div role="alert" className="mb-6 flex items-center gap-2 rounded-xl border border-red-300 bg-red-50 px-4 py-3 text-sm text-red-800"><FileWarning size={16}/>{notice}</div>}
       <section><div className="mb-5 flex items-center justify-between"><h2 className="text-xs font-semibold uppercase tracking-[.16em] text-[#777066]">Local library</h2><span className="text-xs text-[#8a8379]">{books.length} book{books.length === 1 ? "" : "s"}</span></div>
         {!books.length ? <button onClick={() => void upload()} className="flex w-full flex-col items-center rounded-[26px] border border-dashed border-[#cec5b8] bg-white/25 px-6 py-20 text-center hover:bg-white/45"><CloudUpload size={27} className="mb-4 text-[#6d7a89]"/><span className="reader-serif text-2xl">A quiet shelf, for now.</span><span className="mt-2 text-xs text-[#817a70]">Add an EPUB with ⌘O. It stays on this Mac.</span></button> : <div className="grid gap-5 md:grid-cols-2 xl:grid-cols-3">{filtered.map((book, index) => <BookCard key={book.id} book={book} index={index} onDelete={() => void remove(book)}/>)}</div>}

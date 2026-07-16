@@ -48,7 +48,7 @@ export function toFtsQuery(query: string) {
 
 export type ScopedHistoryMessage = { role: "user" | "assistant"; scope?: ReaderScope; citations?: Array<{ endSpineIndex: number; endBlockIndex: number }> };
 
-export function filterHistoryForScope(messages: ScopedHistoryMessage[], scope: ReaderScope, spineIndex: number, blockIndex: number) {
+export function filterHistoryForScope<T extends ScopedHistoryMessage>(messages: T[], scope: ReaderScope, spineIndex: number, blockIndex: number): T[] {
   if (scope === "whole_book") return messages;
   return messages.filter((message) => {
     if (message.scope === "whole_book") return false;

@@ -9,6 +9,7 @@ Books, reading progress, highlights, notes, conversations, and the offline searc
 - macOS 12 or newer on Apple Silicon
 - Node.js 20.9 or newer
 - pnpm 10.21.0
+- Optional local AI: [Ollama](https://ollama.com/download/mac), which currently requires macOS Sonoma 14 or newer
 
 ## Development
 
@@ -39,9 +40,16 @@ The app stores:
 <userData>/credentials.bin
 ```
 
-SQLite uses WAL mode, foreign keys, a five-second busy timeout, transactional schema setup, and pre-migration backups. Search uses FTS5 with normalized Latin terms and overlapping CJK bigrams. Spoiler scope is applied in SQL before BM25 ranking; at most eight bounded excerpts are sent to Gemini.
+SQLite uses WAL mode, foreign keys, a five-second busy timeout, transactional schema setup, and pre-migration backups. Search uses FTS5 with normalized Latin terms and overlapping CJK bigrams. Spoiler scope is applied in SQL before BM25 ranking; at most eight bounded excerpts are sent to the explicitly selected AI provider.
 
-Gemini is optional. Users provide their own Google AI API key in Settings. The key is encrypted with Electron `safeStorage`, which is backed by macOS Keychain, and plaintext fallback is refused. Reading, search, progress, highlights, and note export work without a key.
+Reading, search, progress, highlights, and note export do not require AI. Settings offers two explicit providers:
+
+- **Ollama** runs a separately installed local model. Margin Reader connects only to `http://127.0.0.1:11434`, rejects cloud-tagged models, and never falls back to Gemini. Install and open Ollama, then download a recommended model or select any installed completion-capable local model. Model files remain in Ollama’s `~/.ollama/models` directory and can consume several gigabytes; they are not copied into Margin Reader data.
+- **Gemini** uses the user’s Google AI API key. The key is encrypted with Electron `safeStorage`, backed by macOS Keychain, and plaintext fallback is refused. Only spoiler-permitted excerpts are sent to Google for a Gemini answer.
+
+On first launch, an existing saved Gemini key keeps Gemini selected. Otherwise the app defaults to Ollama and selects a suitable installed model when possible. Provider selection and the chosen Ollama model are stored as non-secret SQLite settings.
+
+If Ollama is unavailable, confirm that the Ollama app is installed, macOS is Sonoma 14 or newer, and the server is running on its default loopback address. Model downloads can be cancelled and resumed; Ollama retains reusable downloaded layers. Margin Reader does not bundle, update, or automatically launch Ollama.
 
 ## Desktop security
 

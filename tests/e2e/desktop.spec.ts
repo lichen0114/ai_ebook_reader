@@ -8,13 +8,26 @@ const executable = path.join(process.cwd(), "out/Margin Reader-darwin-arm64/Marg
 
 test("sandboxed desktop app imports and restores a local EPUB", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "margin-reader-e2e-"));
-  const application = await electron.launch({ args: [path.join(process.cwd(), ".vite/build/main.js"), `--user-data-dir=${userData}`], env: { ...process.env, MARGIN_READER_SQLITE_BINDING_OVERRIDE: path.join(process.cwd(), "out/Margin Reader-darwin-arm64/Margin Reader.app/Contents/Resources/better_sqlite3.node") } });
+  const application = await electron.launch({ args: [path.join(process.cwd(), ".vite/build/main.js"), `--user-data-dir=${userData}`], env: { ...process.env, MARGIN_READER_TEST_OLLAMA_UNAVAILABLE: "1", MARGIN_READER_SQLITE_BINDING_OVERRIDE: path.join(process.cwd(), "out/Margin Reader-darwin-arm64/Margin Reader.app/Contents/Resources/better_sqlite3.node") } });
   application.process().stdout?.pipe(process.stdout);
   application.process().stderr?.pipe(process.stderr);
   try {
     const page = await application.firstWindow();
     await expect(page.getByRole("heading", { name: "Pages worth returning to." })).toBeVisible();
     expect(await page.evaluate(() => ({ process: typeof process, require: typeof require, api: typeof window.marginReader }))).toEqual({ process: "undefined", require: "undefined", api: "object" });
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    const settings = page.getByRole("dialog", { name: "Settings" });
+    const ollamaProvider = settings.getByRole("button", { name: /Local on this Mac Ollama/ });
+    await expect(ollamaProvider).toHaveAttribute("aria-pressed", "true");
+    await expect(settings.getByText("Not detected at 127.0.0.1:11434")).toBeVisible();
+    await expect(settings.getByText("Install or open Ollama first.")).toBeVisible();
+    await expect(settings.getByText(/macOS Sonoma 14/)).toBeVisible();
+    await expect(settings.getByRole("button", { name: "Open official Ollama download" })).toBeVisible();
+    await settings.getByRole("button", { name: /Gemini/ }).click();
+    await expect(settings.getByLabel("Gemini API key")).toBeVisible();
+    await ollamaProvider.click();
+    await settings.getByRole("button", { name: "Close settings" }).click();
+    await expect(page.getByText("Install or open Ollama to use local AI.")).toBeVisible();
     await page.locator('input[type="file"]').setInputFiles("public/books/alice.epub");
     await expect(page.getByText("Ready to read", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByText("Ready to read", { exact: true }).click();
@@ -90,6 +103,7 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await expectReadable(intelligentMargin.getByText(/Grounded in/), "intelligent-margin subtitle");
     await expectReadable(intelligentMargin.getByLabel("Scope"), "scope control");
     await expectReadable(intelligentMargin.getByRole("heading", { name: /A little help/ }), "intelligent-margin empty state");
+    await expect(intelligentMargin.getByText("Permitted excerpts go only to Ollama on this Mac.")).toBeVisible();
     await intelligentMargin.getByRole("button", { name: "Close intelligent margin" }).click();
 
     await page.getByRole("link", { name: "Back to library" }).click();
@@ -117,7 +131,9 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await compactAppearance.getByRole("button", { name: "Close reading appearance" }).click();
     await expect(page.locator(".reader-shell")).toHaveAttribute("data-reader-theme", "dark");
     await expect.poll(() => page.evaluate(() => ({ innerWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ innerWidth: 480, scrollWidth: 480 });
-    await expect.poll(() => bookParagraphs.evaluateAll((paragraphs) => paragraphs.every((paragraph) => paragraph.scrollWidth <= paragraph.clientWidth))).toBe(true);
+    const restoredParagraphs = page.frameLocator("[data-testid=epub-view] iframe").locator("article > p");
+    await expect(restoredParagraphs.first()).toBeVisible();
+    await expect.poll(() => restoredParagraphs.evaluateAll((paragraphs) => paragraphs.every((paragraph) => paragraph.scrollWidth <= paragraph.clientWidth))).toBe(true);
   } finally {
     await closeApplication(application);
     rmSync(userData, { recursive: true, force: true });
@@ -126,7 +142,7 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
 
 test("renderer permissions and popups are denied", async () => {
   const userData = mkdtempSync(path.join(tmpdir(), "margin-reader-e2e-"));
-  const application = await electron.launch({ args: [path.join(process.cwd(), ".vite/build/main.js"), `--user-data-dir=${userData}`], env: { ...process.env, MARGIN_READER_SQLITE_BINDING_OVERRIDE: path.join(process.cwd(), "out/Margin Reader-darwin-arm64/Margin Reader.app/Contents/Resources/better_sqlite3.node") } });
+  const application = await electron.launch({ args: [path.join(process.cwd(), ".vite/build/main.js"), `--user-data-dir=${userData}`], env: { ...process.env, MARGIN_READER_TEST_OLLAMA_UNAVAILABLE: "1", MARGIN_READER_SQLITE_BINDING_OVERRIDE: path.join(process.cwd(), "out/Margin Reader-darwin-arm64/Margin Reader.app/Contents/Resources/better_sqlite3.node") } });
   try {
     const page = await application.firstWindow();
     expect(await page.evaluate(async () => {
@@ -142,7 +158,13 @@ test("renderer permissions and popups are denied", async () => {
 });
 
 async function closeApplication(application: Awaited<ReturnType<typeof electron.launch>>) {
-  await application.close();
+  const child = application.process();
+  try { await application.evaluate(({ app }) => app.exit(0)); } catch { /* connection closes during exit */ }
+  if (child.exitCode !== null) return;
+  await new Promise<void>((resolve) => {
+    const timeout = setTimeout(() => { if (child.exitCode === null) child.kill("SIGKILL"); resolve(); }, 5_000);
+    child.once("exit", () => { clearTimeout(timeout); resolve(); });
+  });
 }
 
 async function expectReadable(locator: import("@playwright/test").Locator, label: string, minimum = 4.5) {

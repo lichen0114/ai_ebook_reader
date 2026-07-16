@@ -24,4 +24,18 @@ describe("SQLite repository", () => {
     expect(repository.getBook(first.id)).toBeNull();
     repository.close();
   });
+
+  it("defaults AI settings by credential state and persists explicit provider choices", () => {
+    const withKeyDirectory = mkdtempSync(path.join(tmpdir(), "margin-reader-")); directories.push(withKeyDirectory);
+    const withKey = new LocalRepository(withKeyDirectory);
+    expect(withKey.getAiSettings(true, "qwen3.5:4b")).toEqual({ provider: "gemini", ollamaModel: "qwen3.5:4b" });
+    expect(withKey.saveAiSettings({ provider: "ollama", ollamaModel: "qwen3.5:2b" })).toEqual({ provider: "ollama", ollamaModel: "qwen3.5:2b" });
+    expect(withKey.getAiSettings(true)).toEqual({ provider: "ollama", ollamaModel: "qwen3.5:2b" });
+    withKey.close();
+
+    const newUserDirectory = mkdtempSync(path.join(tmpdir(), "margin-reader-")); directories.push(newUserDirectory);
+    const newUser = new LocalRepository(newUserDirectory);
+    expect(newUser.getAiSettings(false)).toEqual({ provider: "ollama", ollamaModel: null });
+    newUser.close();
+  });
 });

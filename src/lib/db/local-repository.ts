@@ -5,7 +5,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { parseEpub, type ParsedEpub } from "@/lib/books/epub-parser";
 import { normalizeSearchText, toFtsQuery } from "@/lib/ai/retrieve";
 import type { ReaderScope } from "@/lib/ai/types";
-import type { Conversation, Highlight, LocalBook, LocalCitation, ReadingProgress } from "@/shared/ipc";
+import { aiSettingsSchema, type AiSettings, type Conversation, type Highlight, type LocalBook, type LocalCitation, type ReadingProgress } from "@/shared/ipc";
 
 const DATABASE_VERSION = 1;
 const MAX_IMPORT_BYTES = 50 * 1024 * 1024;
@@ -283,6 +283,23 @@ export class LocalRepository {
   }
 
   deleteConversation(id: string) { return this.db.prepare("DELETE FROM threads WHERE id = ?").run(id).changes > 0; }
+
+  getAiSettings(hasGeminiKey: boolean, preferredOllamaModel: string | null = null): AiSettings {
+    const row = this.db.prepare("SELECT value FROM settings WHERE key = 'ai'").get() as Row | undefined;
+    if (row) {
+      try { return aiSettingsSchema.parse(JSON.parse(String(row.value))); }
+      catch { /* replace invalid legacy data with a safe default */ }
+    }
+    const settings: AiSettings = hasGeminiKey ? { provider: "gemini", ollamaModel: preferredOllamaModel } : { provider: "ollama", ollamaModel: preferredOllamaModel };
+    return this.saveAiSettings(settings);
+  }
+
+  saveAiSettings(input: AiSettings): AiSettings {
+    const settings = aiSettingsSchema.parse(input);
+    this.db.prepare("INSERT INTO settings (key, value, updated_at) VALUES ('ai', ?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at")
+      .run(JSON.stringify(settings), new Date().toISOString());
+    return settings;
+  }
 
   exportNotes(bookId: string, format: "markdown" | "json") {
     const book = this.getBook(bookId);

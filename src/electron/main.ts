@@ -1,12 +1,12 @@
 import { app, autoUpdater, BrowserWindow, dialog, ipcMain, Menu, protocol, safeStorage, session, shell, utilityProcess, type IpcMainInvokeEvent, type UtilityProcess } from "electron";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
-import { aiChunkSchema, credentialInputSchema, credentialStatusSchema, importProgressSchema, requestSchemas, updateStatusSchema, type AiChunk, type ImportProgress, type UpdateStatus, type UtilityOperation } from "@/shared/ipc";
+import { aiChunkSchema, aiSettingsSchema, credentialInputSchema, credentialStatusSchema, importProgressSchema, ollamaPullProgressSchema, ollamaStatusSchema, requestSchemas, updateStatusSchema, type AiChunk, type ImportProgress, type OllamaPullProgress, type UpdateStatus, type UtilityOperation } from "@/shared/ipc";
 
 protocol.registerSchemesAsPrivileged([{ scheme: "margin-reader", privileges: { secure: true, standard: true, supportFetchAPI: true, corsEnabled: false, stream: true } }]);
 
 type RpcResponse = { id: string; ok: true; result: unknown } | { id: string; ok: false; error: string };
-type UtilityEvent = { type: "event"; channel: "ai" | "import"; payload: AiChunk | ImportProgress };
+type UtilityEvent = { type: "event"; channel: "ai" | "import" | "ollama-pull"; payload: AiChunk | ImportProgress | OllamaPullProgress };
 
 let mainWindow: BrowserWindow | null = null;
 let utility: UtilityProcess | null = null;
@@ -142,9 +142,12 @@ function startUtility() {
         if (chunk.type === "done" || chunk.type === "error") {
           for (const [windowId, requestId] of activeAiByWindow) if (requestId === chunk.requestId) activeAiByWindow.delete(windowId);
         }
-      } else {
+      } else if (message.channel === "import") {
         const progress = importProgressSchema.parse(message.payload);
         for (const window of BrowserWindow.getAllWindows()) window.webContents.send("margin:import-progress", progress);
+      } else {
+        const progress = ollamaPullProgressSchema.parse(message.payload);
+        for (const window of BrowserWindow.getAllWindows()) window.webContents.send("margin:ollama-pull-progress", progress);
       }
       return;
     }
@@ -216,9 +219,41 @@ function registerIpc() {
     const apiKey = readCredential();
     return utilityCall("credentials.test", { apiKey });
   });
+  ipcMain.handle("margin:ai-settings-get", async (event) => {
+    assertTrusted(event);
+    return aiSettingsSchema.parse(await utilityCall("ai.settings.get", { hasGeminiKey: existsSync(credentialPath()) }));
+  });
+  ipcMain.handle("margin:ai-settings-save", async (event, raw: unknown) => {
+    assertTrusted(event);
+    const input = aiSettingsSchema.parse(raw);
+    return aiSettingsSchema.parse(await utilityCall("ai.settings.save", input));
+  });
+  ipcMain.handle("margin:ollama-status", async (event) => {
+    assertTrusted(event);
+    return ollamaStatusSchema.parse(await utilityCall("ollama.status", {}));
+  });
+  ipcMain.handle("margin:ollama-pull-start", async (event, raw: unknown) => {
+    assertTrusted(event);
+    const input = requestSchemas["ollama.pull.start"].parse(raw);
+    return utilityCall("ollama.pull.start", input);
+  });
+  ipcMain.handle("margin:ollama-pull-cancel", async (event, raw: unknown) => {
+    assertTrusted(event);
+    const input = requestSchemas["ollama.pull.cancel"].parse(raw);
+    return utilityCall("ollama.pull.cancel", input);
+  });
+  ipcMain.handle("margin:ollama-delete", async (event, raw: unknown) => {
+    assertTrusted(event);
+    const input = requestSchemas["ollama.delete"].parse(raw);
+    return utilityCall("ollama.delete", input);
+  });
+  ipcMain.handle("margin:ollama-open-download", async (event) => {
+    assertTrusted(event);
+    await shell.openExternal("https://ollama.com/download/mac");
+  });
   ipcMain.handle("margin:ai-start", async (event, raw: unknown) => {
     assertTrusted(event);
-    const request = requestSchemas["ai.start"].omit({ apiKey: true }).parse(raw);
+    const request = requestSchemas["ai.start"].omit({ apiKey: true, provider: true, model: true }).parse(raw);
     const windowId = event.sender.id;
     if (activeAiByWindow.has(windowId)) throw new Error("Finish or cancel the current answer first.");
     const starts = aiStartsByWindow.get(windowId) ?? [];
@@ -226,9 +261,12 @@ function registerIpc() {
     if (recent.length >= 20) throw new Error("AI request limit reached. Please wait a moment.");
     recent.push(Date.now());
     aiStartsByWindow.set(windowId, recent);
-    const apiKey = readCredential();
+    const settings = aiSettingsSchema.parse(await utilityCall("ai.settings.get", { hasGeminiKey: existsSync(credentialPath()) }));
+    const model = settings.provider === "gemini" ? "gemini-2.5-flash" : settings.ollamaModel;
+    if (!model) throw new Error("Choose or download an Ollama model in Settings first.");
+    const apiKey = settings.provider === "gemini" ? readCredential() : undefined;
     activeAiByWindow.set(windowId, request.requestId);
-    try { return await utilityCall("ai.start", { ...request, apiKey }); }
+    try { return await utilityCall("ai.start", { ...request, provider: settings.provider, model, ...(apiKey ? { apiKey } : {}) }); }
     catch (error) { activeAiByWindow.delete(windowId); throw error; }
   });
   ipcMain.handle("margin:ai-cancel", async (event, raw: unknown) => {
