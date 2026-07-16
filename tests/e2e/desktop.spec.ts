@@ -19,6 +19,13 @@ test("sandboxed desktop app imports and restores a local EPUB", async () => {
     await expect(page.getByText("Ready to read", { exact: true })).toBeVisible({ timeout: 30_000 });
     await page.getByText("Ready to read", { exact: true }).click();
     await expect(page.locator("[data-testid=epub-view] iframe")).toBeVisible();
+    const compactWindow = await application.evaluate(({ BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0];
+      window.setSize(480, 700);
+      return { minimum: window.getMinimumSize(), bounds: window.getBounds() };
+    });
+    expect(compactWindow).toEqual({ minimum: [480, 560], bounds: expect.objectContaining({ width: 480, height: 700 }) });
+    await expect.poll(() => page.evaluate(() => ({ innerWidth, scrollWidth: document.documentElement.scrollWidth }))).toEqual({ innerWidth: 480, scrollWidth: 480 });
   } finally {
     await closeApplication(application);
     rmSync(userData, { recursive: true, force: true });

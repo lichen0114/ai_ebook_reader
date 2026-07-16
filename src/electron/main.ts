@@ -48,8 +48,8 @@ function createWindow() {
   const window = new BrowserWindow({
     width: 1320,
     height: 860,
-    minWidth: 880,
-    minHeight: 620,
+    minWidth: 480,
+    minHeight: 560,
     show: false,
     backgroundColor: "#f3eee3",
     title: "Margin Reader",

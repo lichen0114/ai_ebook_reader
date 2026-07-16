@@ -31,7 +31,7 @@ const config: ForgeConfig = {
     extendInfo: { LSMinimumSystemVersion: "12.0" },
     osxSign: signingIdentity
       ? { identity: signingIdentity, optionsForFile: () => ({ entitlements: "build/entitlements.plist", hardenedRuntime: true }) }
-      : { identity: "-", identityValidation: false },
+      : { identity: "-", identityValidation: false, optionsForFile: () => ({ entitlements: "build/entitlements.plist", hardenedRuntime: true }) },
     osxNotarize: notarize
   },
   rebuildConfig: {},
