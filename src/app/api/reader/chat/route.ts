@@ -1,10 +1,10 @@
-import { createGateway } from "@ai-sdk/gateway";
 import { convertToModelMessages, createUIMessageStream, createUIMessageStreamResponse, streamText, toUIMessageStream, validateUIMessages } from "ai";
 import { z } from "zod";
 import { getSessionId } from "@/lib/auth/session";
 import { demoCitations } from "@/lib/books/demo";
 import { ownsBook, serverRepository } from "@/lib/books/server-repository";
 import { getConfig } from "@/lib/config";
+import { createGoogleChatModel, googleProviderOptionsForAction } from "@/lib/ai/google-model";
 import { readerInstructions } from "@/lib/ai/instructions";
 import type { Citation, ReaderUIMessage } from "@/lib/ai/types";
 import { readerChatRequestSchema } from "@/lib/validation/reader-chat";
@@ -41,15 +41,15 @@ export async function POST(request: Request) {
       writer.write({ type: "data-sources", data: { items: citations } });
       writer.write({ type: "data-retrieval", data: { status: "ready", candidateCount: citations.length } });
 
-      if (parsed.data.bookId === "alice-in-wonderland" || !config.AI_GATEWAY_API_KEY || process.env.NODE_ENV === "test" || request.headers.get("x-margin-reader-demo") === "1") {
+      if (!config.GOOGLE_GENERATIVE_AI_API_KEY || process.env.NODE_ENV === "test" || request.headers.get("x-margin-reader-demo") === "1") {
         await writeDeterministicAnswer(writer, deterministicAnswer(parsed.data, citations));
         return;
       }
 
-      const gateway = createGateway({ apiKey: config.AI_GATEWAY_API_KEY });
       const evidence = citations.map((source) => `[${source.sourceId}] ${source.chapterTitle}\n${source.quote}`).join("\n\n");
       const result = streamText({
-        model: gateway(config.AI_CHAT_MODEL),
+        model: createGoogleChatModel(config),
+        providerOptions: googleProviderOptionsForAction(parsed.data.action),
         instructions: readerInstructions(parsed.data.action, parsed.data.scope),
         messages: [
           ...await convertToModelMessages(messages),

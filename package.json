@@ -11,13 +11,14 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:smoke:google": "vitest run --config vitest.google.config.ts",
     "test:e2e": "playwright test",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx scripts/migrate.ts",
     "db:seed": "tsx scripts/seed.ts"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "4.0.21",
+    "@ai-sdk/google": "4.0.17",
     "@ai-sdk/react": "4.0.32",
     "@neondatabase/serverless": "1.0.2",
     "@vercel/blob": "2.2.0",
@@ -35,6 +36,7 @@
     "react": "19.2.7",
     "react-dom": "19.2.7",
     "sanitize-html": "2.17.0",
+    "server-only": "0.0.1",
     "tailwind-merge": "3.4.0",
     "zod": "4.3.5"
   },

@@ -11,7 +11,7 @@ The repository contains a deployable Next.js vertical slice, a redistributable p
 - Serif/sans type, font size, line height, reading width, light/paper/dark themes, and paginated/continuous modes.
 - Anchored selection toolbar for Highlight, Note, Explain, Define, Translate, Ask, and Example-ready server action support.
 - Persistent local highlights/notes plus session-scoped API records, exact CFI/quote anchors, workspace navigation, deletion, and Markdown/JSON export.
-- AI SDK v7 `useChat` + `DefaultChatTransport` client and a Route Handler using validated `ReaderUIMessage` parts, request-level reader context, `streamText`, and AI Gateway configuration.
+- AI SDK v7 `useChat` + `DefaultChatTransport` client and a Route Handler using validated `ReaderUIMessage` parts, request-level reader context, `streamText`, and the direct Google Generative AI provider.
 - Typed retrieval, scope, source, and warning data parts. Inline citation buttons navigate to evidence and expose “Back to answer.”
 - Retrieval predicates that enforce selection, chapter, read-so-far, and whole-book boundaries before ranking. Restricted history drops prior whole-book/later-citing answers.
 - Deterministic streamed demo answers when credentials are absent. The seeded later-chapter “Bill” question demonstrates spoiler-safe refusal.
@@ -46,8 +46,8 @@ The migration enables `vector` and creates a `vector(1536)` column. Startup conf
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `DATABASE_URL` | Production | Pooled PostgreSQL URL with pgvector |
-| `AI_GATEWAY_API_KEY` | No | Enables live Vercel AI Gateway answers; otherwise deterministic demo mode |
-| `AI_CHAT_MODEL` | No | Gateway model ID; default `openai/gpt-5.4-mini` |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | Live AI only | Enables direct Gemini answers; otherwise deterministic demo mode |
+| `AI_CHAT_MODEL` | No | Google provider-local model ID; default `gemini-3.1-flash-lite` |
 | `AI_EMBEDDING_MODEL` | No | Central embedding model; default `openai/text-embedding-3-small` |
 | `AI_RERANK_MODEL` | No | Reserved optional reranker model ID |
 | `BLOB_READ_WRITE_TOKEN` | Production uploads | Enables the Vercel Blob adapter; otherwise files use `public/uploads` |
@@ -57,7 +57,7 @@ The migration enables `vector` and creates a `vector(1536)` column. Startup conf
 | `EMBEDDING_DIMENSION` | No | Must remain `1536` for this migration |
 | `EMBEDDING_BATCH_SIZE` | No | Explicit embedding batch size, default 32 |
 
-Never expose AI Gateway, Blob, database, or session secrets through `NEXT_PUBLIC_*` variables.
+Direct Google model IDs omit the Vercel AI Gateway `google/` prefix. Never expose Google AI, Blob, database, or session secrets through `NEXT_PUBLIC_*` variables; Gemini requests are made only by the server-side chat route.
 
 ## Commands
 
@@ -67,11 +67,12 @@ pnpm typecheck
 pnpm test
 pnpm test:e2e
 pnpm build
+GOOGLE_GENERATIVE_AI_API_KEY=... pnpm test:smoke:google
 pnpm db:migrate
 pnpm db:seed
 ```
 
-The normal test suite never calls a paid model. The seeded book always uses the deterministic streamed response path so UI and citation assertions are stable.
+The normal test suite never calls a paid model. Tests, missing-key runs, and requests with the explicit demo header use the deterministic streamed response path, so UI and citation assertions remain stable. The credentialed Google smoke test is opt-in and excluded from normal CI.
 
 ## Architecture
 
@@ -98,10 +99,10 @@ See [docs/architecture.md](docs/architecture.md) and [docs/implementation-plan.m
 1. Provision pooled PostgreSQL with pgvector and run `pnpm db:migrate` against it.
 2. Create a Vercel Blob store.
 3. Import the repository into Vercel; use the default Next.js build command (`pnpm build`).
-4. Configure `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN`, a strong `SESSION_SECRET`, `NEXT_PUBLIC_APP_URL`, and optional AI Gateway variables in Project Settings.
+4. Configure `DATABASE_URL`, `BLOB_READ_WRITE_TOKEN`, a strong `SESSION_SECRET`, `NEXT_PUBLIC_APP_URL`, `GOOGLE_GENERATIVE_AI_API_KEY`, and optionally `AI_CHAT_MODEL` in Project Settings.
 5. Run `pnpm db:seed` once against the production database, then deploy the review environment.
 
-AI Gateway may also authenticate through Vercel project identity where supported, but the explicit `AI_GATEWAY_API_KEY` path is documented and implemented.
+`GOOGLE_GENERATIVE_AI_API_KEY` is required for live Gemini calls. Without it, the deployment remains usable in deterministic grounded-answer mode.
 
 ## Known limitations
 

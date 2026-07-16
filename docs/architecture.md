@@ -15,7 +15,7 @@ PublicationRenderer ── relocation/selection ──► Reader shell
         └── Back to answer                  scope filter → retrieval
                                                    │
                                           deterministic demo or
-                                          AI Gateway streamText
+                                          direct Gemini streamText
 ```
 
 The reader owns navigation and typography. AI state is isolated in the temporary margin so token streaming does not rerender the EPUB iframe.

@@ -6,7 +6,7 @@ const csp = [
   "style-src 'self' 'unsafe-inline' blob:",
   "img-src 'self' blob: data:",
   "font-src 'self' data:",
-  "connect-src 'self' https://ai-gateway.vercel.sh",
+  "connect-src 'self'",
   "frame-src 'self' blob:",
   "object-src 'none'",
   "base-uri 'self'",

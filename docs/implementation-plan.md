@@ -40,5 +40,5 @@ The visual direction is an editorial reading room: warm neutral paper, compact s
 ## Constraints and graceful degradation
 
 - Without a database, seeded demo data and mutations use the local demo repository so the complete reader flow remains reviewable.
-- Without an AI Gateway key, deterministic grounded answers stream from the same endpoint and typed protocol.
+- Without a Google Generative AI key, deterministic grounded answers stream from the same endpoint and typed protocol.
 - Uploaded files are DRM-free only. Remote EPUB resources and executable content are blocked.
